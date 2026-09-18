@@ -6,6 +6,12 @@ hl.config({
         col = {
             splash = CACHYLGREEN,
         },
+        -- No stock anime-girl wallpaper / logo splash on startup: show plain
+        -- background_color until Noctalia paints its wallpaper layer.
+        disable_hyprland_logo = true,
+        disable_splash_rendering = true,
+        force_default_wallpaper = 0,
+        background_color = "0x000000",
         middle_click_paste = false,
         enable_swallow = true,
         swallow_regex = "(kitty|ghostty|[Kk]onsole|Alacritty|gnome-terminal|xfce[0-9]?-terminal)",
