@@ -9,6 +9,7 @@
     ./modules/desktop.nix
     ./modules/editors.nix
     ./modules/tools.nix
+    ./modules/launcher.nix
   ];
   # Config-only migration: pacman keeps owning all binaries/drivers.
   home.packages = [ ];

@@ -1,0 +1,308 @@
+#!/usr/bin/python3
+"""Keep the app launcher limited to entries that actually open a window.
+
+Every desktop entry visible to the launcher is checked against automatic rules
+(terminal programs, console-only tools, missing programs, libraries, files or
+working directories) and against ~/.config/launcher-curate/rules. Entries that
+fail are hidden with NoDisplay=true, so they still work as MIME handlers.
+
+System entries are hidden through a generated override of the same desktop-file
+ID in ~/.local/share/applications. User entries are stashed in
+~/.local/state/launcher-curate/stash and replaced by a generated override, so
+the original can always be restored byte for byte. Generated files carry
+X-Launcher-Curate-*; nothing else is ever modified. Runs are idempotent.
+
+Usage: launcher-curate [--list] [--dry-run]
+"""
+
+import fnmatch
+import glob
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+DATA_HOME = os.environ.get("XDG_DATA_HOME") or f"{HOME}/.local/share"
+CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME") or f"{HOME}/.config"
+STATE_HOME = os.environ.get("XDG_STATE_HOME") or f"{HOME}/.local/state"
+USER_APPS = os.path.join(DATA_HOME, "applications")
+STASH = os.path.join(STATE_HOME, "launcher-curate", "stash")
+RULES = os.path.join(CONFIG_HOME, "launcher-curate", "rules")
+MARK = "X-Launcher-Curate"
+SOURCE_KEY = "X-Launcher-Curate-Source"
+FIELD_CODES = {"%f", "%F", "%u", "%U", "%i", "%c", "%k", "%d", "%D", "%n", "%N", "%v", "%m"}
+
+
+def data_dirs():
+    dirs = (os.environ.get("XDG_DATA_DIRS") or "").split(":")
+    dirs += ["/usr/local/share", "/usr/share", f"{HOME}/.nix-profile/share"]
+    seen, out = set(), []
+    for d in dirs:
+        if d and d not in seen and os.path.isdir(os.path.join(d, "applications")):
+            seen.add(d)
+            out.append(d)
+    return out
+
+
+def entry_group(text):
+    """Return the [Desktop Entry] key/values (unlocalized keys only)."""
+    values, inside = {}, False
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("["):
+            inside = s == "[Desktop Entry]"
+            continue
+        if inside and "=" in s and not s.startswith("#"):
+            k, v = s.split("=", 1)
+            if "[" not in k:
+                values.setdefault(k.strip(), v.strip())
+    return values
+
+
+def read(path):
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def is_true(v):
+    return (v or "").lower() == "true"
+
+
+# ---------------------------------------------------------------- rules
+
+
+def load_rules():
+    rules = []
+    try:
+        lines = read(RULES).splitlines()
+    except OSError:
+        return rules
+    for raw in lines:
+        body, _, comment = raw.partition("#")
+        parts = body.split()
+        if len(parts) >= 2 and parts[0] in {"hide", "show", "needs", "env"}:
+            rules.append((parts[0], parts[1], parts[2:], comment.strip()))
+    return rules
+
+
+def satisfied(alternatives):
+    for alt in alternatives.split("|"):
+        if alt.startswith("/") and glob.glob(alt):
+            return True
+        if not alt.startswith("/") and shutil.which(alt):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------- checks
+
+
+def exec_argv(cmd):
+    try:
+        argv = shlex.split(cmd.replace("%%", "%"))
+    except ValueError:
+        return None
+    argv = [a for a in argv if a not in FIELD_CODES]
+    while argv and (argv[0] == "env" or ("=" in argv[0] and not argv[0].startswith("/"))):
+        argv.pop(0)
+    return argv
+
+
+def resolve(prog):
+    if prog.startswith("/"):
+        return prog if os.access(prog, os.X_OK) else None
+    return shutil.which(prog)
+
+
+def missing_libraries(path):
+    try:
+        with open(path, "rb") as f:
+            if f.read(4) != b"\x7fELF":
+                return []
+        out = subprocess.run(["ldd", path], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return [l.split()[0] for l in out.splitlines() if "not found" in l]
+
+
+def automatic_reasons(e):
+    reasons = []
+    if is_true(e.get("Terminal")):
+        reasons.append("terminal program")
+    if "ConsoleOnly" in e.get("Categories", "").split(";"):
+        reasons.append("console-only")
+    tryexec = e.get("TryExec")
+    if tryexec and not resolve(tryexec):
+        reasons.append(f"missing program {tryexec}")
+    argv = exec_argv(e.get("Exec", ""))
+    if not argv:
+        reasons.append("unusable Exec line")
+        return reasons
+    prog = resolve(argv[0])
+    if prog is None:
+        reasons.append(f"missing program {argv[0]}")
+    else:
+        libs = missing_libraries(prog)
+        if libs:
+            reasons.append(f"missing library {libs[0]}")
+    if argv[0] not in {"sh", "bash", "/bin/sh", "/usr/bin/sh", "/bin/bash", "/usr/bin/bash"}:
+        for arg in argv[1:]:
+            if arg.startswith("/") and "/" in arg[1:] and not os.path.exists(arg):
+                reasons.append(f"missing file {arg}")
+                break
+    wd = e.get("Path")
+    if wd and not os.path.isdir(wd):
+        reasons.append(f"missing working directory {wd}")
+    return reasons
+
+
+def decide(did, e, rules):
+    """Return (hide_reasons, env_assignments) for one entry."""
+    reasons, env, forced_show = automatic_reasons(e), [], False
+    for kind, pattern, args, comment in rules:
+        if not fnmatch.fnmatch(did, pattern):
+            continue
+        if kind == "hide":
+            reasons.append(comment or "hidden by rule")
+        elif kind == "show":
+            forced_show = True
+        elif kind == "needs" and args and not satisfied(args[0]):
+            reasons.append(comment or f"needs {args[0]}")
+        elif kind == "env":
+            env += args
+    return ([] if forced_show else reasons), env
+
+
+# ---------------------------------------------------------------- output
+
+
+def transform(text, source, reasons, env):
+    out, inside, header = [], False, (
+        f"# Generated by launcher-curate from {source}; edit the rules file instead.\n"
+    )
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("["):
+            inside = s == "[Desktop Entry]"
+            out.append(line)
+            if inside:
+                if reasons:
+                    out.append("NoDisplay=true")
+                    out.append(f"{MARK}={'; '.join(reasons)}")
+                else:
+                    out.append(f"{MARK}=patched")
+                out.append(f"{SOURCE_KEY}={source}")
+            continue
+        if inside and reasons and s.split("=", 1)[0].strip() == "NoDisplay":
+            continue
+        if env and s.startswith("Exec="):
+            line = "Exec=env " + " ".join(env) + " " + s[len("Exec="):]
+        out.append(line)
+    return header + "\n".join(out) + "\n"
+
+
+def write(path, content, dry):
+    try:
+        if read(path) == content:
+            return False
+    except OSError:
+        pass
+    if not dry:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".launcher-curate.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    return True
+
+
+def main():
+    list_mode = "--list" in sys.argv
+    dry = "--dry-run" in sys.argv or list_mode
+    rules = load_rules()
+
+    # desktop-file ID -> files in precedence order (user dir first)
+    ids = {}
+    for base in [DATA_HOME] + data_dirs():
+        apps = os.path.join(base, "applications")
+        for root, _, files in os.walk(apps):
+            for name in files:
+                if name.endswith(".desktop"):
+                    path = os.path.join(root, name)
+                    rel = os.path.relpath(path, apps)
+                    ids.setdefault(rel.replace(os.sep, "-"), []).append((path, rel))
+
+    changed, report = 0, []
+    for did, paths in sorted(ids.items(), key=lambda kv: kv[0].lower()):
+        top, rel = paths[0]
+        target = os.path.join(USER_APPS, rel)  # overrides always live in the user dir
+        top_text = read(top)
+        ours = top.startswith(USER_APPS + os.sep) and SOURCE_KEY in top_text
+        stash_path = os.path.join(STASH, os.path.relpath(top, USER_APPS)) if top.startswith(USER_APPS + os.sep) else None
+
+        if ours:
+            source = entry_group(top_text).get(SOURCE_KEY, "")
+            if not os.path.exists(source):
+                if not dry:
+                    os.remove(top)
+                changed += 1
+                report.append(("removed", did, "source gone"))
+                continue
+        elif top.startswith(USER_APPS + os.sep):
+            source = None  # a user entry not written by us: stash it if it needs changes
+        else:
+            source = top
+
+        src_path = source or top
+        text = read(src_path)
+        e = entry_group(text)
+        if e.get("Type", "Application") != "Application" or is_true(e.get("Hidden")) or is_true(e.get("NoDisplay")):
+            if ours:  # nothing to add on top of an already-hidden source
+                if not dry:
+                    os.remove(top)
+                    if source.startswith(STASH + os.sep):
+                        os.replace(source, top)
+                changed += 1
+            continue
+
+        reasons, env = decide(did, e, rules)
+        name = e.get("Name", did)
+        if not reasons and not env:
+            if ours:  # restore: no longer needs an override
+                if not dry:
+                    if source.startswith(STASH + os.sep):
+                        os.replace(source, top)
+                    else:
+                        os.remove(top)
+                changed += 1
+                report.append(("restored", did, name))
+            else:
+                report.append(("visible", did, name))
+            continue
+
+        if source is None and os.path.islink(top):  # owned by Home Manager or an app: never replace
+            report.append(("skipped", did, "symlinked entry; fix at its source: " + "; ".join(reasons)))
+            continue
+        if source is None:  # user entry needing an override: stash the original first
+            source = stash_path
+            if not dry:
+                os.makedirs(os.path.dirname(source), exist_ok=True)
+                shutil.copy2(top, source)
+        if write(target, transform(text, source, reasons, env), dry):
+            changed += 1
+        report.append(("hidden" if reasons else "patched", did, "; ".join(reasons) or " ".join(env)))
+
+    if changed and not dry and shutil.which("update-desktop-database"):
+        subprocess.run(["update-desktop-database", "-q", USER_APPS], check=False)
+
+    if list_mode:
+        for state, did, detail in report:
+            print(f"{state:9} {did:55} {detail}")
+    elif changed:
+        print(f"launcher-curate: {changed} change(s)" + (" (dry run)" if dry else ""))
+
+
+if __name__ == "__main__":
+    main()

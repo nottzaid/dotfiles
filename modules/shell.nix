@@ -9,7 +9,6 @@
     "$HOME/.local/bin"
     "$HOME/.local/share/pnpm/bin"
     "$HOME/.opencode/bin"
-    "$HOME/.grok/bin"
   ];
   programs.bash = {
     enable = true;
