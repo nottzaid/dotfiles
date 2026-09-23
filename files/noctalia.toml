@@ -2,17 +2,18 @@
 ui_scale = 1.20
 
 [bar.default]
-# i3bar look (i3/i3bar defaults): bottom edge, flush and square, monospace,
-# white text; workspaces on the left, status on the right, nothing centered.
+# Romanticized i3bar: bottom edge, flush and square, with room to breathe;
+# workspaces on the left, colored status blocks on the right.
 position = "bottom"
-thickness = 20
+thickness = 28
 scale = 1.0
-font_family = "monospace"
-color = "#ffffff"
+font_family = "FantasqueSansM Nerd Font"
+font_weight = "medium"
+color = "#cdd6f4"
 margin_edge = 0
 margin_ends = 0
-padding = 0
-widget_spacing = 8
+padding = 10
+widget_spacing = 12
 radius_top_left = 0
 radius_top_right = 0
 radius_bottom_left = 0
@@ -94,44 +95,53 @@ wallpaper_scheme = "m3-tonal-spot"
 [plugins]
 enabled = [ "zaid/i3bar" ]
 
-# i3status-style blocks: colored like i3status (good #00ff00 tinting toward
-# bad #ff0000 as a value rises), separated by i3bar's 1px lines. Stats keep
-# their glyphs until Noctalia ships `custom_label` (newer than 5.1.0).
+# Status blocks in soft Catppuccin tones; stats tint toward rose (#f38ba8)
+# as they rise, like i3status's good/bad colors. Stats keep their glyphs
+# until Noctalia ships `custom_label` (newer than 5.1.0).
 [widget.i3_workspaces]
 type = "zaid/i3bar:workspaces"
 
 [widget.active_window]
 display = "text_only"
+color = "#a6adc8"
 
 [widget.network]
-color = "#00ff00"
+color = "#a6e3a1"
 
 [widget.temp]
 type = "sysmon"
 stat = "cpu_temp"
 visualization = "none"
-color = "#00ff00"
-highlight_color = "#ff0000"
+color = "#f9e2af"
+highlight_color = "#f38ba8"
 
 [widget.sysmon_2]
 type = "sysmon"
 stat = "gpu_temp"
 visualization = "none"
-color = "#00ff00"
-highlight_color = "#ff0000"
+color = "#fab387"
+highlight_color = "#f38ba8"
 
 [widget.sysmon_3]
 type = "sysmon"
 stat = "ram_used"
 visualization = "none"
-color = "#00ff00"
-highlight_color = "#ff0000"
+color = "#89dceb"
+highlight_color = "#f38ba8"
 
 [widget.volume]
-mute_color = "#ff0000"
+color = "#cba6f7"
+mute_color = "#f38ba8"
 
 [widget.clock]
-format = "{:%Y-%m-%d %H:%M:%S}"
+format = "{:%a %d %b  %H:%M}"
+color = "#cdd6f4"
+
+[widget.notifications]
+color = "#b4befe"
+
+[widget.session]
+color = "#f38ba8"
 
 [widget.media]
 hide_when_no_media = true

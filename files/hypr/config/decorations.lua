@@ -1,46 +1,50 @@
--- Look and feel: i3's defaults (2px borders in i3's colors; no gaps,
--- rounding, transparency, blur, or shadows). Tabbed groups are drawn like
--- i3's tabbed containers.
+-- Look and feel: a romanticized i3 (the i3-gaps look). Square windows with
+-- 2px borders, small gaps, i3's blue shading into the theme's lavender on the
+-- focused window; no rounding, transparency, blur, or shadows. Tabbed groups
+-- are drawn like i3's tabbed containers.
 
 hl.config({
     general = {
-        gaps_in = 0,
-        gaps_out = 0,
+        gaps_in = 4,
+        gaps_out = 8,
         border_size = 2,
         extend_border_grab_area = 10,
         resize_on_border = true,
         col = {
-            active_border = I3_FOCUSED,
-            inactive_border = I3_UNFOCUSED,
+            active_border = {
+                colors = { I3_FOCUSED_BORDER, LAVENDER },
+                angle = 45,
+            },
+            inactive_border = MUTED,
         },
     },
     group = {
         col = {
-            border_active = I3_FOCUSED,
-            border_inactive = I3_UNFOCUSED,
-            border_locked_active = I3_FOCUSED,
-            border_locked_inactive = I3_UNFOCUSED,
+            border_active = { colors = { I3_FOCUSED_BORDER, LAVENDER }, angle = 45 },
+            border_inactive = MUTED,
+            border_locked_active = { colors = { I3_FOCUSED_BORDER, LAVENDER }, angle = 45 },
+            border_locked_inactive = MUTED,
         },
         groupbar = {
-            font_family = "monospace",
-            font_size = 11,
-            height = 18,
+            font_family = "FantasqueSansM Nerd Font",
+            font_size = 12,
+            height = 20,
             gradients = true,
             rounding = 0,
             gradient_rounding = 0,
             indicator_height = 0,
-            gaps_in = 0,
+            gaps_in = 2,
             gaps_out = 0,
             keep_upper_gap = false,
             text_color = I3_TEXT,
-            text_color_inactive = I3_TEXT_UNFOCUSED,
+            text_color_inactive = SUBTEXT,
             text_color_locked_active = I3_TEXT,
-            text_color_locked_inactive = I3_TEXT_UNFOCUSED,
+            text_color_locked_inactive = SUBTEXT,
             col = {
                 active = I3_FOCUSED,
-                inactive = I3_UNFOCUSED,
+                inactive = MUTED,
                 locked_active = I3_FOCUSED,
-                locked_inactive = I3_UNFOCUSED,
+                locked_inactive = MUTED,
             },
         },
     },

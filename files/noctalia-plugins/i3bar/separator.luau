@@ -1,9 +1,9 @@
 --!nonstrict
--- i3bar block separator: a 1px #666666 line inset from the bar edges
--- (i3bar's sep_voff_px); the bar's widget spacing supplies the side gaps.
+-- i3bar-style block separator: a quiet 1px line, inset from the bar edges;
+-- the bar's widget spacing supplies the side gaps.
 local function render()
   barWidget.render(ui.row({ align = "center" }, {
-    ui.box({ width = 1, height = 12, fill = "#666666" }),
+    ui.box({ width = 1, height = 14, fill = "#45475a" }),
   }))
 end
 
