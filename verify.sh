@@ -40,12 +40,16 @@ done || fail "submodule revisions"
 syntax_failures=0
 for script in "$ROOT/install.sh" "$ROOT/verify.sh" "$ROOT"/files/bin/* "$ROOT"/tests/*.sh; do
     [[ -f "$script" ]] || continue
-    if ! bash -n "$script"; then
-        fail "Bash syntax: ${script#"$ROOT"/}"
+    case "$(head -n1 -- "$script")" in
+        *python*) check=(python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())') ;;
+        *) check=(bash -n) ;;
+    esac
+    if ! "${check[@]}" "$script"; then
+        fail "Syntax: ${script#"$ROOT"/}"
         syntax_failures=$((syntax_failures + 1))
     fi
 done
-((syntax_failures == 0)) && pass "Bash syntax"
+((syntax_failures == 0)) && pass "Script syntax"
 
 # Every path the old symlink farm owned must now resolve into the
 # Home Manager generation; resolving under $ROOT or dangling fails.
@@ -65,6 +69,8 @@ check_managed ".emacs.d/init.el"
 check_managed ".config/nvim/nvim-pack-lock.json"
 check_managed ".local/bin/swash-screenshot"
 check_managed ".local/bin/wait-for-tcp"
+check_managed ".local/bin/launcher-curate"
+check_managed ".config/launcher-curate/rules"
 check_managed "Pictures/background.jpg"
 check_managed "Pictures/lockscreen.jpg"
 fi

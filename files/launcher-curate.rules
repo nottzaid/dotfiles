@@ -1,0 +1,24 @@
+# launcher-curate rules — see ~/.local/bin/launcher-curate for the automatic checks
+# (terminal programs, console-only tools, missing programs/libraries/files).
+#
+#   hide  <desktop-id-glob>              # reason shown by `launcher-curate --list`
+#   show  <desktop-id-glob>              force visible, overriding every other rule
+#   needs <desktop-id-glob> <alt>|<alt>  hide unless one alternative exists
+#                                        (absolute path glob, or a command on PATH)
+#   env   <desktop-id-glob> VAR=value    launch with extra environment (repairs)
+
+# Starts the Noctalia shell daemon, which is already running: no window.
+hide dev.noctalia.Noctalia.desktop  # shell daemon, already running
+
+# uwsm's unit picker renders through an external menu program.
+needs uuctl.desktop fuzzel|wofi|rofi|walker|tofi|bemenu|dmenu  # needs a dmenu-style picker
+
+# Video4Linux tools are useless without a capture device.
+needs qv4l2.desktop /dev/video*    # no video capture device
+needs qvidcap.desktop /dev/video*  # no video capture device
+
+# Wine creates uninstaller shortcuts for every program it installs.
+hide wine-*Uninstall*.desktop  # Wine uninstaller shortcut
+
+# nvidia-settings hangs without a window under native Wayland GTK.
+env nvidia-settings.desktop GDK_BACKEND=x11
