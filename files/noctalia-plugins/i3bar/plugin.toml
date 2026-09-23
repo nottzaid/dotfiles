@@ -13,6 +13,14 @@ dependencies = ["python"]
 id = "workspaces"
 entry = "workspaces.luau"
 
+# Noctalia 5.1 returns no output name to plugin widgets, so each bar's
+# instance is told its monitor explicitly (per-monitor bar overrides).
+[[widget.setting]]
+key = "monitor"
+type = "string"
+label_key = "Monitor (connector name, e.g. HDMI-A-1)"
+default = ""
+
 # Noctalia 5.1 applies these host settings, but its plugin validator only
 # recognizes manifest-declared keys. Declare the overrides used in our config.
 [[widget.setting]]
