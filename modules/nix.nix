@@ -1,9 +1,22 @@
 # Nix hygiene: one nixpkgs (the flake's), and nothing accumulates.
-{ config, nixpkgs, ... }:
+{ config, pkgs, nixpkgs, ... }:
 {
   # `nix shell nixpkgs#foo` resolves to the nixpkgs this flake pins instead of
   # downloading another one.
   nix.registry.nixpkgs.flake = nixpkgs;
+
+  # Home Manager uses nix.package for its activation tools (nix-build,
+  # nix-env, ...) and genericLinux sources its etc/profile.d/nix.sh. Point the
+  # tools at pacman's Nix and ship only that script (it has no store
+  # references), instead of a second Nix beside pacman's.
+  nix.package = pkgs.runCommand "pacman-nix" { } ''
+    mkdir -p $out/bin
+    for tool in nix nix-build nix-channel nix-collect-garbage nix-env \
+      nix-instantiate nix-shell nix-store; do
+      ln -s /usr/bin/$tool $out/bin/$tool
+    done
+    install -Dm644 ${pkgs.nix}/etc/profile.d/nix.sh $out/etc/profile.d/nix.sh
+  '';
 
   # Weekly: drop Home Manager generations older than two weeks, then collect
   # garbage with pacman's nix.

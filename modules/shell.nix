@@ -4,7 +4,7 @@
 { config, pkgs, ... }:
 {
   home.sessionVariables = {
-    PNPM_HOME = "${config.home.homeDirectory}/.local/share/pnpm/bin";
+    PNPM_HOME = "${config.home.homeDirectory}/.local/share/pnpm"; # pnpm puts global bins in $PNPM_HOME/bin
   };
   home.sessionPath = [
     "$HOME/.local/bin"

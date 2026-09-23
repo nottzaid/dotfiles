@@ -32,6 +32,7 @@ in
   # stops recreating Desktop, Music, Public, and Templates at every login.
   xdg.userDirs = {
     enable = true;
+    package = null; # pacman's xdg-user-dirs
     createDirectories = false;
     desktop = home;
     documents = "${home}/Documents";
