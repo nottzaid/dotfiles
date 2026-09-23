@@ -34,7 +34,8 @@ local function switchTo(target)
 end
 
 local function render()
-  local output = barWidget.outputName()
+  local configured = noctalia.getConfig("monitor")
+  local output = barWidget.outputName() or (configured ~= "" and configured or nil)
   local focusedMonitor, visibleOn = nil, {}
   for _, m in ipairs(monitors) do
     visibleOn[m.activeWorkspace.id] = m.name
@@ -45,7 +46,9 @@ local function render()
 
   local shown = {}
   for _, ws in ipairs(workspaces) do
-    if ws.id > 0 and (output == nil or ws.monitor == output) then
+    -- Like i3: a workspace shows while it has windows or is on screen.
+    local exists = ws.windows > 0 or visibleOn[ws.id] ~= nil
+    if ws.id > 0 and exists and (output == nil or ws.monitor == output) then
       table.insert(shown, ws)
     end
   end

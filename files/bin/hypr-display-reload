@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Apply the display layout from monitors.lua. Hyprland does not create a
+# Wayland output for HDMI-A-2 when it stops mirroring at runtime, so Wayland
+# clients (Noctalia's bar and wallpaper, the launcher) never see that screen.
+# Turning the output off before reloading makes Hyprland create it fresh.
+set -euo pipefail
+
+hyprctl eval 'hl.monitor({ output = "HDMI-A-2", disabled = true })' >/dev/null
+hyprctl reload >/dev/null
