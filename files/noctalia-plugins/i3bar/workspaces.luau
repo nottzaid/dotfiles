@@ -1,13 +1,15 @@
 --!nonstrict
--- i3bar workspace buttons for Hyprland: full-height boxes with a 1px border in
--- i3's default colors, one per workspace on this bar's monitor. Clicking or
--- scrolling goes through ~/.local/bin/workspace-stream, like the keybinds.
+-- i3bar-style workspace buttons for Hyprland, romanticized: square boxes with
+-- a 1px border, i3's blue for the focused workspace, soft Catppuccin tones for
+-- the rest, one per workspace on this bar's monitor. Clicking or scrolling
+-- goes through ~/.local/bin/workspace-stream, like the keybinds.
 
 local COLORS = {
-  focused = { border = "#4c7899", bg = "#285577", fg = "#ffffff" },
-  active = { border = "#333333", bg = "#333333", fg = "#ffffff" }, -- visible on an unfocused monitor
-  inactive = { border = "#333333", bg = "#222222", fg = "#888888" },
-  urgent = { border = "#2f343a", bg = "#900000", fg = "#ffffff" },
+  focused = { border = "#4c7899", bg = "#285577", fg = "#ffffff", weight = "bold" },
+  active = { border = "#45475a", bg = "#313244", fg = "#cdd6f4" }, -- visible on an unfocused monitor
+  occupied = { border = "#313244", bg = "#1e1e2e", fg = "#a6adc8" },
+  empty = { border = "#1e1e2e", bg = "#181825", fg = "#6c7086" },
+  urgent = { border = "#f38ba8", bg = "#f38ba8", fg = "#1e1e2e", weight = "bold" },
 }
 local SWITCH = noctalia.expandPath("~/.local/bin/workspace-stream")
 
@@ -50,7 +52,7 @@ local function render()
 
   local buttons = {}
   for _, ws in ipairs(shown) do
-    local state = "inactive"
+    local state = ws.windows > 0 and "occupied" or "empty"
     if urgent[ws.id] then
       state = "urgent"
     elseif visibleOn[ws.id] then
@@ -63,17 +65,17 @@ local function render()
       fill = c.bg,
       border = c.border,
       borderWidth = 1,
-      paddingH = 5,
+      paddingH = 9,
       align = "center",
       justify = "center",
       onClick = function()
         switchTo(id)
       end,
     }, {
-      ui.label({ text = ws.name ~= "" and ws.name or id, color = c.fg }),
+      ui.label({ text = ws.name ~= "" and ws.name or id, color = c.fg, fontWeight = c.weight or "medium" }),
     }))
   end
-  barWidget.render(ui.row({ gap = 1 }, buttons))
+  barWidget.render(ui.row({ gap = 3, paddingV = 4 }, buttons))
 end
 
 local function refresh()

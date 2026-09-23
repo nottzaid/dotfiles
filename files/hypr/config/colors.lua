@@ -19,3 +19,10 @@ I3_UNFOCUSED_BORDER = "rgba(333333ff)"
 I3_URGENT           = "rgba(900000ff)"
 I3_TEXT             = "rgba(ffffffff)"
 I3_TEXT_UNFOCUSED   = "rgba(888888ff)"
+
+-- Romanticized i3 accents (Catppuccin Mocha), harmonizing with the lavender
+-- Noctalia derives from the wallpaper.
+LAVENDER = "rgba(bdc2ffff)"
+MUTED    = "rgba(313244ff)"
+MUTED_HI = "rgba(45475aff)"
+SUBTEXT  = "rgba(a6adc8ff)"
