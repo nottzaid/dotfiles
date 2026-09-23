@@ -32,7 +32,28 @@ in
     "autostart/gnome-keyring-pkcs11.desktop".text = hidden;
   };
   # i3bar-style workspace buttons and separators (a local Noctalia plugin).
-  xdg.dataFile."noctalia/plugins/i3bar".source = ../files/noctalia-plugins/i3bar;
+  # Copied in place rather than linked: Noctalia hot-reloads a plugin when its
+  # files change, and writing into the existing files keeps its watches valid.
+  home.activation.i3barPlugin = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
+    dst="$HOME/.local/share/noctalia/plugins/i3bar"
+    src=${../files/noctalia-plugins/i3bar}
+    [ -L "$dst" ] && run rm "$dst"
+    run mkdir -p "$dst"
+    for f in "$src"/*; do
+      t="$dst/$(basename "$f")"
+      cmp -s "$f" "$t" || run cp --no-preserve=mode "$f" "$t"
+    done
+    for t in "$dst"/*; do
+      [ -e "$src/$(basename "$t")" ] || run rm -f "$t"
+    done
+  '';
+  # Noctalia's file watcher misses Home Manager's symlink swaps; reload it so
+  # config and plugin changes apply on switch.
+  home.activation.reloadNoctalia = lib.hm.dag.entryAfter [ "linkGeneration" "i3barPlugin" ] ''
+    if /usr/bin/pgrep -x noctalia >/dev/null; then
+      run /usr/bin/noctalia msg config-reload >/dev/null || true
+    fi
+  '';
   # Swash rewrites its own settings, so seed them once instead of linking a
   # read-only copy that the app would replace.
   home.activation.seedSwashSettings = lib.hm.dag.entryAfter [ "writeBoundary" ] ''

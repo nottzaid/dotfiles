@@ -5,15 +5,18 @@
 -- goes through ~/.local/bin/workspace-stream, like the keybinds.
 
 local COLORS = {
-  focused = { border = "#4c7899", bg = "#285577", fg = "#ffffff", weight = "bold" },
-  active = { border = "#45475a", bg = "#313244", fg = "#cdd6f4" }, -- visible on an unfocused monitor
-  occupied = { border = "#313244", bg = "#1e1e2e", fg = "#a6adc8" },
-  empty = { border = "#1e1e2e", bg = "#181825", fg = "#6c7086" },
-  urgent = { border = "#f38ba8", bg = "#f38ba8", fg = "#1e1e2e", weight = "bold" },
+  focused = { border = "#4c7899", bg = "#285577", hover = "#3e6685", fg = "#ffffff", weight = "bold" },
+  active = { border = "#45475a", bg = "#313244", hover = "#414257", fg = "#cdd6f4" }, -- visible on an unfocused monitor
+  occupied = { border = "#313244", bg = "#1e1e2e", hover = "#2c2c3d", fg = "#a6adc8" },
+  empty = { border = "#1e1e2e", bg = "#181825", hover = "#20212f", fg = "#6c7086" },
+  urgent = { border = "#f38ba8", bg = "#f38ba8", hover = "#f59cb5", fg = "#1e1e2e", weight = "bold" },
 }
+-- Buttons span the full bar height; keep in sync with [bar.default] thickness.
+local BAR_THICKNESS = 36
 local SWITCH = noctalia.expandPath("~/.local/bin/workspace-stream")
 
 local workspaces, monitors, urgent = {}, {}, {}
+local hoveredWorkspace = nil
 
 local function hyprctlJson(what, onValue)
   noctalia.runAsync({ "hyprctl", "-j", what }, function(result)
@@ -62,20 +65,34 @@ local function render()
     local id = tostring(ws.id)
     table.insert(buttons, ui.row({
       key = id,
-      fill = c.bg,
+      fill = hoveredWorkspace == id and c.hover or c.bg,
       border = c.border,
       borderWidth = 1,
-      paddingH = 9,
+      paddingH = 12,
       align = "center",
       justify = "center",
+      onHover = "onWorkspaceHover",
       onClick = function()
         switchTo(id)
       end,
     }, {
-      ui.label({ text = ws.name ~= "" and ws.name or id, color = c.fg, fontWeight = c.weight or "medium" }),
+      ui.label({ text = ws.name ~= "" and ws.name or id, color = c.fg, fontWeight = c.weight or "medium", baseline = "inkCentered" }),
     }))
   end
-  barWidget.render(ui.row({ gap = 3, paddingV = 4 }, buttons))
+  barWidget.render(ui.row({ gap = 2, height = BAR_THICKNESS }, buttons))
+end
+
+-- A named, keyed handler also receives leave events when a workspace disappears.
+function onWorkspaceHover(state, id)
+  if state == "true" then
+    if hoveredWorkspace == id then return end
+    hoveredWorkspace = id
+  elseif hoveredWorkspace == id then
+    hoveredWorkspace = nil
+  else
+    return
+  end
+  render()
 end
 
 local function refresh()
