@@ -106,15 +106,17 @@ enabled = [ "zaid/i3bar" ]
 # Status blocks in soft Catppuccin tones; stats tint toward rose (#f38ba8)
 # as they rise, like i3status's good/bad colors. Stats keep their glyphs
 # until Noctalia ships `custom_label` (newer than 5.1.0).
+# Noctalia 5.1 tints an entire plugin widget with its `color` on hover. Keep
+# that tint transparent; the plugin draws explicit colors and per-button
+# hovers. One instance per screen (see [bar.default.monitor.big]).
 [widget.i3_workspaces]
 type = "zaid/i3bar:workspaces"
 monitor = "HDMI-A-1"
+color = "#00000000"
 
 [widget.i3_workspaces_big]
 type = "zaid/i3bar:workspaces"
 monitor = "HDMI-A-2"
-# Noctalia 5.1 tints the entire plugin using this color on hover. Keep that
-# tint transparent; the plugin draws explicit colors and per-button hovers.
 color = "#00000000"
 
 [widget.active_window]
