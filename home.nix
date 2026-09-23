@@ -1,4 +1,4 @@
-{ ... }:
+{ pkgs, ... }:
 {
   home.username = "zaid";
   home.homeDirectory = "/home/zaid";
@@ -8,6 +8,8 @@
     # pacman owns the GPU stack; the Nix GPU shim would pull ~1 GB of Mesa/LLVM.
     gpu.enable = false;
   };
+  # Locales for Nix-built programs: UTF-8 only (3 MB instead of 222 MB).
+  i18n.glibcLocales = pkgs.glibcLocalesUtf8;
   imports = [
     ./modules/shell.nix
     ./modules/desktop.nix
