@@ -1,0 +1,18 @@
+# i3bar look for Noctalia on Hyprland: i3bar's workspace buttons and its block
+# separators. Colors and geometry follow i3's defaults (i3/i3bar/src/xcb.c).
+id = "zaid/i3bar"
+name = "i3bar"
+version = "1.0.0"
+plugin_api = 9
+author = "zaid"
+license = "MIT"
+description = "i3bar-style workspace buttons and block separators for Hyprland."
+dependencies = ["python"]
+
+[[widget]]
+id = "workspaces"
+entry = "workspaces.luau"
+
+[[widget]]
+id = "separator"
+entry = "separator.luau"
