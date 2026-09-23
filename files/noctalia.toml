@@ -5,14 +5,15 @@ ui_scale = 1.20
 # Romanticized i3bar: bottom edge, flush and square, with room to breathe;
 # workspaces on the left, colored status blocks on the right.
 position = "bottom"
-thickness = 28
+thickness = 36
 scale = 1.0
+font_scale = 1.25
 font_family = "FantasqueSansM Nerd Font"
 font_weight = "medium"
 color = "#cdd6f4"
 margin_edge = 0
 margin_ends = 0
-padding = 10
+padding = 0
 widget_spacing = 12
 radius_top_left = 0
 radius_top_right = 0
@@ -22,9 +23,11 @@ concave_edge_corners = false
 shadow = false
 capsule = false
 capsule_radius = 0.0
+# Widgets fill the bar's full height (Noctalia defaults to 76%).
+capsule_thickness = 1.0
 start = [ "i3_workspaces", "spacer_1", "active_window" ]
 center = [ ]
-end = [ "media", "network", "sep_1", "temp", "sep_2", "sysmon_2", "sep_3", "sysmon_3", "sep_4", "volume", "sep_5", "clock", "tray", "notifications", "session" ]
+end = [ "media", "network", "sep_1", "temp", "sep_2", "sysmon_2", "sep_3", "sysmon_3", "sep_4", "volume", "sep_5", "clock", "tray", "notifications", "session", "spacer_2" ]
 
 [shell]
 clipboard_image_action_command = "$HOME/.local/bin/swash-screenshot --stdin --name \"swash-$(date +'%Y-%m-%d_%H:%M:%S').png\""
@@ -100,9 +103,13 @@ enabled = [ "zaid/i3bar" ]
 # until Noctalia ships `custom_label` (newer than 5.1.0).
 [widget.i3_workspaces]
 type = "zaid/i3bar:workspaces"
+# Noctalia 5.1 tints the entire plugin using this color on hover. Keep that
+# tint transparent; the plugin draws explicit colors and per-button hovers.
+color = "#00000000"
 
 [widget.active_window]
 display = "text_only"
+interactive = false
 color = "#a6adc8"
 
 [widget.network]
@@ -150,17 +157,26 @@ title_scroll = "on_hover"
 [widget.spacer_1]
 type = "spacer"
 
+[widget.spacer_2]
+type = "spacer"
+length = 10
+
 [widget.sep_1]
 type = "zaid/i3bar:separator"
+interactive = false
 
 [widget.sep_2]
 type = "zaid/i3bar:separator"
+interactive = false
 
 [widget.sep_3]
 type = "zaid/i3bar:separator"
+interactive = false
 
 [widget.sep_4]
 type = "zaid/i3bar:separator"
+interactive = false
 
 [widget.sep_5]
 type = "zaid/i3bar:separator"
+interactive = false

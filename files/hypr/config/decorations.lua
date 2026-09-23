@@ -1,12 +1,12 @@
--- Look and feel: a romanticized i3 (the i3-gaps look). Square windows with
--- 2px borders, small gaps, i3's blue shading into the theme's lavender on the
+-- Look and feel: a romanticized i3. Square windows with
+-- 2px borders, no gaps, i3's blue shading into the theme's lavender on the
 -- focused window; no rounding, transparency, blur, or shadows. Tabbed groups
 -- are drawn like i3's tabbed containers.
 
 hl.config({
     general = {
-        gaps_in = 4,
-        gaps_out = 8,
+        gaps_in = 0,
+        gaps_out = 0,
         border_size = 2,
         extend_border_grab_area = 10,
         resize_on_border = true,

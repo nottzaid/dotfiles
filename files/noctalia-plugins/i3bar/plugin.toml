@@ -2,7 +2,7 @@
 # separators. Colors and geometry follow i3's defaults (i3/i3bar/src/xcb.c).
 id = "zaid/i3bar"
 name = "i3bar"
-version = "1.0.0"
+version = "1.0.1"
 plugin_api = 9
 author = "zaid"
 license = "MIT"
@@ -13,6 +13,21 @@ dependencies = ["python"]
 id = "workspaces"
 entry = "workspaces.luau"
 
+# Noctalia 5.1 applies these host settings, but its plugin validator only
+# recognizes manifest-declared keys. Declare the overrides used in our config.
+[[widget.setting]]
+key = "color"
+type = "color"
+label_key = "Widget hover tint"
+default = "#00000000"
+advanced = true
+
 [[widget]]
 id = "separator"
 entry = "separator.luau"
+
+[[widget.setting]]
+key = "interactive"
+type = "bool"
+label_key = "Interactive"
+default = false
