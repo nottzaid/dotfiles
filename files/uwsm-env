@@ -1,8 +1,6 @@
-export PNPM_HOME="$HOME/.local/share/pnpm/bin"
-export PATH="$PNPM_HOME:$HOME/.local/bin:$PATH"
+# Graphical-session environment for UWSM. UWSM also loads the login profile,
+# so PATH and general variables come from Home Manager (modules/shell.nix).
 
-export BROWSER=firefox
-export TERM=xterm-kitty
 export QT_QPA_PLATFORM="wayland;xcb"
 export QT_QPA_PLATFORMTHEME="qt6ct"
 export ELECTRON_OZONE_PLATFORM_HINT=auto
@@ -11,11 +9,11 @@ export HYPRCURSOR_SIZE=24
 export XCURSOR_THEME="Bibata-Modern-Ice"
 export XCURSOR_SIZE=24
 
-# If you have an NVIDIA GPU uncommment the following lines
-# export GBM_BACKEND=nvidia-drm # force GBM as a backend
-# export __GLX_VENDOR_LIBRARY_NAME=nvidia # force GBM as a backend
-# export LIBVA_DRIVER_NAME=nvidia # Hardware acceleration on NVIDIA GPUs
-# export __GL_GSYNC_ALLOWED=1 # Controls if G-Sync capable monitors should use Variable Refresh Rate (VRR)
+# NVIDIA (GTX 1060, proprietary 580xx driver): VA-API through NVDEC, and the
+# NVIDIA GLX vendor library for XWayland clients.
+export LIBVA_DRIVER_NAME=nvidia
+export NVD_BACKEND=direct
+export __GLX_VENDOR_LIBRARY_NAME=nvidia
 
 # Stop Wine from generating launcher entries/menus for everything it installs
 # (Proton and Lutris already do this for their own prefixes).

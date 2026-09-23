@@ -12,7 +12,18 @@ rules="$ROOT/files/hypr/config/windowrules.lua"
 
 grep -Fq 'require("config.windowrules")' "$config"
 grep -Fq 'require("yt-stream-workspace")' "$config"
-grep -Fq 'mirror   = "HDMI-A-1"' "$monitors"
+# Both monitor modes must produce a valid config, whichever one is selected.
+grep -Eq '^local MODE = "(mirror|extended)"$' "$monitors"
+for mode in mirror extended; do
+    rm -rf "$TMP/hypr"
+    cp -r "$ROOT/files/hypr" "$TMP/hypr"
+    sed -i "s/^local MODE = .*/local MODE = \"$mode\"/" "$TMP/hypr/config/monitors.lua"
+    if command -v Hyprland >/dev/null 2>&1 &&
+        ! Hyprland --verify-config --config "$TMP/hypr/hyprland.lua" 2>&1 | grep -q 'config ok'; then
+        printf 'monitors.lua MODE=%s does not produce a valid config\n' "$mode" >&2
+        exit 1
+    fi
+done
 grep -Fq 'name = "swash-overlay"' "$rules"
 grep -Fq 'fullscreen_state = 2' "$rules"
 grep -Fq 'sync_fullscreen = true' "$rules"

@@ -21,7 +21,6 @@ nodejs
 noctalia
 noto-fonts-emoji
 pavucontrol
-playerctl
 pnpm
 power-profiles-daemon
 python
@@ -30,9 +29,16 @@ ripgrep
 rsync
 slurp
 swash
-ttf-jetbrains-mono-nerd
 wireplumber
 wl-clipboard
 xdg-desktop-portal
 xdg-desktop-portal-gtk
 xdg-desktop-portal-hyprland
+# Tools used directly (formerly hand-copied into ~/.local/bin or ~/.local/opt).
+cargo-nextest
+just
+mise
+rtkit
+typst
+zed
+zig

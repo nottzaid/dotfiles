@@ -16,8 +16,10 @@ Usage: launcher-curate [--list] [--dry-run]
 """
 
 import fnmatch
+import functools
 import glob
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -116,15 +118,35 @@ def resolve(prog):
     return shutil.which(prog)
 
 
+@functools.cache
+def system_libraries():
+    out = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True).stdout
+    return {line.split()[0] for line in out.splitlines()[1:] if line.strip()}
+
+
 def missing_libraries(path):
+    """Direct shared-library dependencies that cannot be resolved (read from
+    the ELF headers; nothing is executed)."""
     try:
         with open(path, "rb") as f:
             if f.read(4) != b"\x7fELF":
                 return []
-        out = subprocess.run(["ldd", path], capture_output=True, text=True, timeout=10).stdout
+        out = subprocess.run(["readelf", "-d", path], capture_output=True, text=True, timeout=10).stdout
     except (OSError, subprocess.TimeoutExpired):
         return []
-    return [l.split()[0] for l in out.splitlines() if "not found" in l]
+    origin = os.path.dirname(os.path.realpath(path))
+    dirs = [d.replace("$ORIGIN", origin)
+            for run in re.findall(r"Library (?:runpath|rpath): \[(.*?)\]", out)
+            for d in run.split(":")]
+    missing = []
+    for lib in re.findall(r"Shared library: \[(.*?)\]", out):
+        if "/" in lib:  # linked by path, not by soname
+            found = os.path.exists(lib)
+        else:
+            found = lib in system_libraries() or any(os.path.exists(os.path.join(d, lib)) for d in dirs)
+        if not found:
+            missing.append(lib)
+    return missing
 
 
 def automatic_reasons(e):
@@ -221,6 +243,8 @@ def write(path, content, dry):
 def main():
     list_mode = "--list" in sys.argv
     dry = "--dry-run" in sys.argv or list_mode
+    if not os.path.exists(RULES) and os.path.isdir(os.path.dirname(RULES)):
+        return  # rules link mid-replacement (e.g. during home-manager switch)
     rules = load_rules()
 
     # desktop-file ID -> files in precedence order (user dir first)

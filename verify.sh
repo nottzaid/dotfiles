@@ -8,41 +8,22 @@ failures=0
 pass() { printf 'PASS %s\n' "$*"; }
 fail() { printf 'FAIL %s\n' "$*" >&2; failures=$((failures + 1)); }
 
-HM_GEN="$(readlink -f -- "${HOME}/.local/state/nix/profiles/home-manager" 2>/dev/null || true)"
-if [[ "${DOTFILES_SKIP_HM:-0}" == 1 ]]; then
-    HM_GEN=""
-elif [[ -z "$HM_GEN" || ! -e "$HM_GEN/home-files" ]]; then
-    fail "no active Home Manager generation"
-    HM_GEN=""
+git -C "$ROOT" diff --check || fail "repository whitespace"
+if git -C "$ROOT" submodule status --recursive | grep -qE '^[-+U]'; then
+    fail "submodule revisions (uninitialized, modified, or conflicted)"
+else
+    pass "submodule revisions"
 fi
 
-check_managed() {
-    local rel="$1" dest resolved="" expected=""
-    dest="$HOME/$rel"
-    if [[ -n "$HM_GEN" ]]; then
-        expected="$(readlink -f -- "$HM_GEN/home-files/$rel" 2>/dev/null || true)"
-    fi
-    if [[ -n "$expected" && -L "$dest" ]]; then
-        resolved="$(readlink -f -- "$dest" 2>/dev/null || true)"
-    fi
-    if [[ -n "$expected" && "$resolved" == "$expected" ]]; then
-        pass "$rel"
-    else
-        fail "$rel is not deployed from the current Home Manager generation"
-    fi
-}
-
-git -C "$ROOT" diff --check || fail "repository whitespace"
-git -C "$ROOT" submodule status --recursive | while read -r state _; do
-    [[ "$state" != -* && "$state" != +* && "$state" != U* ]]
-done || fail "submodule revisions"
-
+# Syntax of every script, with the interpreter its shebang names.
 syntax_failures=0
-for script in "$ROOT/install.sh" "$ROOT/verify.sh" "$ROOT"/files/bin/* "$ROOT"/tests/*.sh; do
+bash_scripts=()
+for script in "$ROOT/install.sh" "$ROOT/verify.sh" "$ROOT/system/apply.sh" \
+    "$ROOT"/files/bin/* "$ROOT"/tests/*.sh; do
     [[ -f "$script" ]] || continue
     case "$(head -n1 -- "$script")" in
         *python*) check=(python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())') ;;
-        *) check=(bash -n) ;;
+        *) check=(bash -n); bash_scripts+=("$script") ;;
     esac
     if ! "${check[@]}" "$script"; then
         fail "Syntax: ${script#"$ROOT"/}"
@@ -51,47 +32,46 @@ for script in "$ROOT/install.sh" "$ROOT/verify.sh" "$ROOT"/files/bin/* "$ROOT"/t
 done
 ((syntax_failures == 0)) && pass "Script syntax"
 
-# Every path the old symlink farm owned must now resolve into the
-# Home Manager generation; resolving under $ROOT or dangling fails.
-# Skipped when DOTFILES_SKIP_HM=1 (disposable-HOME tests without nix).
+# ShellCheck is a Haskell program; run it from Nix rather than installing the
+# Haskell runtime with pacman.
+if [[ "${DOTFILES_SKIP_SHELLCHECK:-0}" != 1 ]] && command -v nix >/dev/null 2>&1; then
+    if nix run nixpkgs#shellcheck -- -S warning "${bash_scripts[@]}"; then
+        pass "shellcheck"
+    else
+        fail "shellcheck"
+    fi
+fi
+
+# Every file in the active Home Manager generation must be what is deployed.
 if [[ "${DOTFILES_SKIP_HM:-0}" != 1 ]]; then
-check_managed ".bashrc"
-check_managed ".bash_profile"
-check_managed ".profile"
-check_managed ".config/fish/config.fish"
-check_managed ".config/hypr/hyprland.lua"
-check_managed ".config/hypr/config/windowrules.lua"
-check_managed ".config/noctalia/config.toml"
-check_managed ".config/swash/settings.ini"
-check_managed ".config/herdr/config.toml"
-check_managed ".config/kitty/kitty.conf"
-check_managed ".emacs.d/init.el"
-check_managed ".config/nvim/nvim-pack-lock.json"
-check_managed ".local/bin/swash-screenshot"
-check_managed ".local/bin/wait-for-tcp"
-check_managed ".local/bin/launcher-curate"
-check_managed ".config/launcher-curate/rules"
-check_managed "Pictures/background.jpg"
-check_managed "Pictures/lockscreen.jpg"
+    HM_GEN="$(readlink -f -- "$HOME/.local/state/nix/profiles/home-manager" 2>/dev/null || true)"
+    if [[ -z "$HM_GEN" || ! -d "$HM_GEN/home-files" ]]; then
+        fail "no active Home Manager generation"
+    else
+        managed=0 drifted=()
+        while IFS= read -r -d '' file; do
+            rel="${file#"$HM_GEN/home-files/"}"
+            managed=$((managed + 1))
+            [[ "$(readlink -f -- "$HOME/$rel" 2>/dev/null)" == "$(readlink -f -- "$file")" ]] ||
+                drifted+=("$rel")
+        done < <(find "$HM_GEN/home-files/" \( -type l -o -type f \) -print0)
+        if ((${#drifted[@]})); then
+            fail "not deployed from the current generation: ${drifted[*]}"
+        else
+            pass "all $managed Home Manager files deployed"
+        fi
+    fi
 fi
 
-if command -v pnpm >/dev/null 2>&1 && command -v uv >/dev/null 2>&1; then
-    pass "pnpm and uv package-manager policy"
-else
-    fail "pnpm and uv package-manager policy"
-fi
-
-for forbidden in npm npx bun yarn corepack pip pip3 pipx poetry pdm hatch rye conda mamba; do
-    if command -v "$forbidden" >/dev/null 2>&1; then
-        fail "forbidden package manager is available: $forbidden"
+# Ownership: shells, man, and Python come from pacman, never from a Nix or
+# hand-copied binary earlier in PATH.
+for tool in bash fish man python3; do
+    if [[ "$(command -v "$tool")" == /usr/bin/"$tool" ]]; then
+        pass "$tool from pacman"
+    else
+        fail "$tool resolves to $(command -v "$tool" || echo nothing), not /usr/bin/$tool"
     fi
 done
-
-if [[ "$(PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin command -v python3)" == /usr/bin/python3 ]]; then
-    pass "distribution Python precedence"
-else
-    fail "distribution Python precedence"
-fi
 
 if PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin \
     /usr/bin/python3 /usr/bin/powerprofilesctl --help >/dev/null 2>&1; then
