@@ -21,13 +21,11 @@ export XDG_STATE_HOME="$TEST_HOME/.local/state"
 export DOTFILES_SKIP_HM=1
 export DOTFILES_SKIP_SESSION_IMPORT=1
 export DOTFILES_SKIP_PACKAGE_INSTALL=1
-export DOTFILES_SKIP_SERVICE_BUILDS=1
-export DOTFILES_SKIP_USER_SERVICES=1
 unset HYPRLAND_INSTANCE_SIGNATURE
 
 # Dotfiles themselves are owned by `home-manager switch --flake "$ROOT"`
 # on a real home (skipped here); this exercises the provisioning modes.
-"$ROOT/install.sh" --streaming --controller --services
+"$ROOT/install.sh" --streaming
 "$ROOT/verify.sh"
 
 [[ ! -L "$HOME/.config/yt-stream-workspace/config" ]]
@@ -36,14 +34,9 @@ unset HYPRLAND_INSTANCE_SIGNATURE
 # shellcheck disable=SC2016
 grep -Fqx 'YTWS_WALLPAPER="$HOME/Pictures/background.jpg"' \
     "$HOME/.config/yt-stream-workspace/config"
-[[ -L "$HOME/.config/containers/systemd/searxng.container" ]]
-[[ "$(stat -c %a "$HOME/.config/searxng/settings.yml")" == 600 ]]
-controller_target="$(readlink -f "$HOME/.local/bin/controller-mouse-game-guard")"
-expected_controller="$ROOT/components/linux-zhixu-controller-fix/scripts/controller-mouse-game-guard"
-[[ "$controller_target" == "$expected_controller" ]]
 printf '\n# preserved user edit\n' >>"$HOME/.config/yt-stream-workspace/config"
 
-"$ROOT/install.sh" --streaming --controller --services
+"$ROOT/install.sh" --streaming
 "$ROOT/verify.sh"
 
 grep -q '^# preserved user edit$' "$HOME/.config/yt-stream-workspace/config"

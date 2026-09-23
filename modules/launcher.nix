@@ -18,6 +18,8 @@ in
     Unit.Description = "Hide launcher entries that cannot open a window";
     Service = {
       Type = "oneshot";
+      # Debounce: installs and home-manager switches change many files at once.
+      ExecStartPre = "/usr/bin/sleep 2";
       ExecStart = curate;
     };
     Install.WantedBy = [ "default.target" ];

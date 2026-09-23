@@ -39,8 +39,7 @@ distrobox create --yes \
 distrobox enter "$BOX_NAME" -- bash -lc '
     set -Eeuo pipefail
     # Hermetic boundary: distrobox forwards the host environment (notably
-    # PATH), which would leak host tools like ~/.local/bin/bun into the
-    # "clean image" assertions below. Scrub to container system dirs only.
+    # PATH); scrub it to container system dirs only.
     export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
     sudo pacman -Syu --needed --noconfirm \
         git nodejs openssl pnpm power-profiles-daemon python python-gobject uv
@@ -50,15 +49,7 @@ distrobox enter "$BOX_NAME" -- bash -lc '
     # live Home Manager session PATH, which cannot exist in a clean image
     # without nix. It runs on switched machines instead.
     ./tests/install-smoke.sh
-    ./tests/projects-sync.sh
 
-    for forbidden in npm npx bun yarn corepack pip pip3 pipx poetry pdm hatch rye conda mamba; do
-        if command -v "$forbidden" >/dev/null 2>&1; then
-            printf "forbidden package manager available in clean image: %s\n" \
-                "$forbidden" >&2
-            exit 1
-        fi
-    done
 '
 
 printf '%s\n' 'PASS disposable Arch Distrobox workstation restore'

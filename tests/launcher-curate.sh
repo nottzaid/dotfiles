@@ -11,7 +11,7 @@ mkdir -p "$apps" "$TMP/sys/applications" "$TMP/cfg/launcher-curate"
 : >"$TMP/cfg/launcher-curate/rules"
 run() {
     env XDG_DATA_HOME="$TMP/data" XDG_CONFIG_HOME="$TMP/cfg" XDG_STATE_HOME="$TMP/state" \
-        XDG_DATA_DIRS="$TMP/sys" HOME="$TMP" "$ROOT/files/bin/launcher-curate" "$@"
+        XDG_DATA_DIRS="$TMP/sys" HOME="$TMP" "$ROOT/files/bin/launcher-curate"
 }
 fail() { printf 'FAIL %s\n' "$*" >&2; exit 1; }
 

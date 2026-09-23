@@ -1,4 +1,0 @@
-# Optional local search and speech infrastructure.
-podman
-distrobox
-uv

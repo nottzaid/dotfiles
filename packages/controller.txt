@@ -1,4 +1,0 @@
-# User-space controller mapping and event-driven game isolation.
-antimicrox
-python-dbus
-python-gobject
