@@ -31,6 +31,8 @@ in
     "autostart/gnome-keyring-secrets.desktop".text = hidden;
     "autostart/gnome-keyring-pkcs11.desktop".text = hidden;
   };
+  # i3bar-style workspace buttons and separators (a local Noctalia plugin).
+  xdg.dataFile."noctalia/plugins/i3bar".source = ../files/noctalia-plugins/i3bar;
   # Swash rewrites its own settings, so seed them once instead of linking a
   # read-only copy that the app would replace.
   home.activation.seedSwashSettings = lib.hm.dag.entryAfter [ "writeBoundary" ] ''

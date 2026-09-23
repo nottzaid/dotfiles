@@ -22,4 +22,6 @@
   # Ownership: pacman owns binaries, drivers, and the GPU stack. Home Manager
   # owns configuration, plus the few CLI tools pacman lacks (modules/tools.nix).
   programs.home-manager.enable = true;
+  # No desktop notification about Home Manager news on every switch.
+  news.display = "silent";
 }

@@ -9,3 +9,13 @@ CACHYDBLUE  = "rgba(111826ff)"
 CACHYWHITE  = "rgba(ffffffff)"
 CACHYGREY   = "rgba(ddddddff)"
 CACHYGRAY   = "rgba(798bb2ff)"
+
+-- i3 defaults (i3/src/config.c: client.focused/unfocused/focused_inactive/urgent)
+I3_FOCUSED_BORDER   = "rgba(4c7899ff)"
+I3_FOCUSED          = "rgba(285577ff)"
+I3_FOCUSED_INACTIVE = "rgba(5f676aff)"
+I3_UNFOCUSED        = "rgba(222222ff)"
+I3_UNFOCUSED_BORDER = "rgba(333333ff)"
+I3_URGENT           = "rgba(900000ff)"
+I3_TEXT             = "rgba(ffffffff)"
+I3_TEXT_UNFOCUSED   = "rgba(888888ff)"
