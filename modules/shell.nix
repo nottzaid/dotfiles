@@ -10,6 +10,9 @@
     "$HOME/.local/bin"
     "$HOME/.local/share/pnpm/bin"
     "$HOME/.opencode/bin"
+    # Tools installed with `cargo install` / `go install` (see modules/layout.nix).
+    "${config.xdg.dataHome}/cargo/bin"
+    "${config.xdg.dataHome}/go/bin"
   ];
   programs.bash = {
     enable = true;
