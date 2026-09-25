@@ -20,7 +20,8 @@ printf '[Desktop Entry]\nType=Application\nName=Gone\nExec=/nonexistent/bin/gone
 printf '[Desktop Entry]\nType=Application\nName=Fine\nExec=true\n' >"$TMP/sys/applications/fine.desktop"
 cp "$apps/tui.desktop" "$TMP/tui.orig"
 
-run >/dev/null
+ln -s "$TMP/nonexistent/app.desktop" "$apps/dangling.desktop"
+run >/dev/null || fail "a dangling entry crashed the run"
 grep -qx 'NoDisplay=true' "$apps/tui.desktop" || fail "user terminal entry not hidden"
 cmp -s "$TMP/tui.orig" "$stash/tui.desktop" || fail "user entry not stashed intact"
 grep -qx 'NoDisplay=true' "$apps/gone.desktop" || fail "broken system entry not overridden"

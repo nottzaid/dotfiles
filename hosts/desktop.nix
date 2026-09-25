@@ -1,4 +1,9 @@
 # Desktop: ASUS B85M, NVIDIA GTX 1060; a 24" HDMI monitor plus a 4K TV.
+{ config, ... }:
+let
+  home = config.home.homeDirectory;
+  link = config.lib.file.mkOutOfStoreSymlink;
+in
 {
   home.username = "zaid";
   home.homeDirectory = "/home/zaid";
@@ -22,6 +27,11 @@
       ];
     };
   };
+
+  # Zeron (installed here only) self-updates under ~/.zeron/app/current; link
+  # its own desktop entry and icon so the launcher follows every update.
+  xdg.dataFile."applications/zeron.desktop".source = link "${home}/.zeron/app/current/zeron.desktop";
+  xdg.dataFile."icons/hicolor/512x512/apps/zeron.png".source = link "${home}/.zeron/app/current/zeron.png";
 
   home.file.".local/bin/hypr-display-reload" = {
     source = ../files/bin/hypr-display-reload;
