@@ -1,7 +1,6 @@
 { pkgs, ... }:
 {
-  home.username = "zaid";
-  home.homeDirectory = "/home/zaid";
+  # Identity and machine differences: hosts/<host>.nix.
   home.stateVersion = "26.05";
   targets.genericLinux = {
     enable = true;
@@ -11,6 +10,7 @@
   # Locales for Nix-built programs: UTF-8 only (3 MB instead of 222 MB).
   i18n.glibcLocales = pkgs.glibcLocalesUtf8;
   imports = [
+    ./modules/host.nix
     ./modules/shell.nix
     ./modules/desktop.nix
     ./modules/editors.nix

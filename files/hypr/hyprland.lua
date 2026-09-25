@@ -8,7 +8,7 @@ require("config.variables")
 require("config.inputs")
 require("config.binds")
 require("config.misc")
-require("config.monitors")
+require("config.host") -- per machine: files/hosts/<host>/hypr/config/host.lua
 require("config.windowrules")
 require("config.workspaces")
 

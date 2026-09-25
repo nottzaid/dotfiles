@@ -89,12 +89,19 @@ if command -v Hyprland >/dev/null 2>&1; then
             fail "Hyprland live config"
         fi
     fi
-    if Hyprland --verify-config --config "$ROOT/files/hypr/hyprland.lua" 2>&1 |
-        grep -q 'config ok'; then
-        pass "Hyprland tracked config"
-    else
-        fail "Hyprland tracked config"
-    fi
+    # Each machine's tree: the shared files plus files/hosts/<host>/hypr.
+    for host_dir in "$ROOT"/files/hosts/*/; do
+        host="$(basename "$host_dir")"
+        tree="$(mktemp -d)"
+        cp -r "$ROOT/files/hypr/." "$tree/"
+        cp -r "$host_dir/hypr/." "$tree/"
+        if Hyprland --verify-config --config "$tree/hyprland.lua" 2>&1 | grep -q 'config ok'; then
+            pass "Hyprland tracked config ($host)"
+        else
+            fail "Hyprland tracked config ($host)"
+        fi
+        rm -rf -- "$tree"
+    done
 fi
 
 if command -v hyprctl >/dev/null 2>&1 && [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then

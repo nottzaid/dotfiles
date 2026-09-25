@@ -1,0 +1,5 @@
+# Desktop: NVIDIA GTX 1060 (proprietary 580xx driver) drives the screens.
+# VA-API through NVDEC, and the NVIDIA GLX vendor library for XWayland.
+export LIBVA_DRIVER_NAME=nvidia
+export NVD_BACKEND=direct
+export __GLX_VENDOR_LIBRARY_NAME=nvidia
