@@ -262,6 +262,9 @@ def main():
     for did, paths in sorted(ids.items(), key=lambda kv: kv[0].lower()):
         top, rel = paths[0]
         target = os.path.join(USER_APPS, rel)  # overrides always live in the user dir
+        if not os.path.exists(top):  # dangling symlink: nothing to curate
+            report.append(("skipped", did, "dangling entry " + top))
+            continue
         top_text = read(top)
         ours = top.startswith(USER_APPS + os.sep) and SOURCE_KEY in top_text
         stash_path = os.path.join(STASH, os.path.relpath(top, USER_APPS)) if top.startswith(USER_APPS + os.sep) else None

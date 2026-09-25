@@ -73,7 +73,14 @@ in
   # config and plugin changes apply on switch.
   home.activation.reloadNoctalia = lib.hm.dag.entryAfter [ "linkGeneration" "i3barPlugin" ] ''
     if /usr/bin/pgrep -x noctalia >/dev/null; then
-      run /usr/bin/noctalia msg config-reload >/dev/null || true
+      # Noctalia's IPC socket is named after the Wayland display; outside the
+      # session (e.g. over SSH) take the display from the socket itself.
+      display="''${WAYLAND_DISPLAY:-}"
+      if [ -z "$display" ]; then
+        sock=$(ls "/run/user/$(id -u)"/noctalia-wayland-*.sock 2>/dev/null | grep -v dmenu | head -1)
+        display=$(basename "$sock" .sock | sed 's/^noctalia-//')
+      fi
+      WAYLAND_DISPLAY="$display" run /usr/bin/noctalia msg config-reload >/dev/null || true
     fi
   '';
   # Hyprland auto-reloads while links are still being swapped and can catch a
