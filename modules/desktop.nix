@@ -9,23 +9,45 @@
 # location, so scattered per-file links fail at (re)load. A recursive dir
 # keeps one staged tree: entry and siblings share a canonical root. Same
 # hazard applies to kitty's `include themes/...`.
-{ lib, ... }:
+#
+# Machine differences come from modules/host.nix: the Hyprland tree gets the
+# host's config/host.lua merged in (one tree, for the reason above), uwsm/env
+# gets the host's additions, and Noctalia's config gets the host's overrides.
+{ config, lib, pkgs, ... }:
 let
   hidden = "[Desktop Entry]\nType=Application\nHidden=true\n";
+  cfg = config.dotfiles;
+  hostDir = ../files/hosts + "/${cfg.host}";
+
+  hyprTree = pkgs.runCommand "hypr-config-${cfg.host}" { } ''
+    cp -r ${../files/hypr} $out
+    chmod -R u+w $out
+    cp -r ${hostDir + "/hypr"}/. $out/
+  '';
+
+  hostEnv = hostDir + "/uwsm-env";
+  uwsmEnv =
+    builtins.readFile ../files/uwsm-env
+    + lib.optionalString (builtins.pathExists hostEnv) ("\n" + builtins.readFile hostEnv);
+
+  noctaliaBase = lib.recursiveUpdate (builtins.fromTOML (builtins.readFile ../files/noctalia.toml)) cfg.noctalia;
+  noctaliaConfig = lib.recursiveUpdate noctaliaBase {
+    bar.default.end = lib.concatMap (w: if w == "clock" then cfg.noctaliaStatusExtra ++ [ w ] else [ w ]) noctaliaBase.bar.default.end;
+  };
 in
 {
   xdg.configFile = {
     "hypr" = {
-      source = ../files/hypr;
+      source = hyprTree;
       recursive = true;
     };
     "kitty" = {
       source = ../files/kitty;
       recursive = true;
     };
-    "noctalia/config.toml".source = ../files/noctalia.toml;
+    "noctalia/config.toml".source = (pkgs.formats.toml { }).generate "noctalia-config.toml" noctaliaConfig;
     "herdr/config.toml".source = ../files/herdr.toml;
-    "uwsm/env".source = ../files/uwsm-env;
+    "uwsm/env".text = uwsmEnv;
     # gnome-keyring runs from its systemd socket (unlocked by PAM at login);
     # the XDG autostart copies would start a second daemon.
     "autostart/gnome-keyring-secrets.desktop".text = hidden;
@@ -52,6 +74,14 @@ in
   home.activation.reloadNoctalia = lib.hm.dag.entryAfter [ "linkGeneration" "i3barPlugin" ] ''
     if /usr/bin/pgrep -x noctalia >/dev/null; then
       run /usr/bin/noctalia msg config-reload >/dev/null || true
+    fi
+  '';
+  # Hyprland auto-reloads while links are still being swapped and can catch a
+  # half-updated tree (a `require` of a file not linked yet). Reload once more
+  # after linking; config-only leaves the monitors alone.
+  home.activation.reloadHyprland = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
+    if [ -n "$(ls "/run/user/$(id -u)/hypr" 2>/dev/null)" ]; then
+      run /usr/bin/hyprctl --instance 0 reload config-only >/dev/null || true
     fi
   '';
   # Swash rewrites its own settings, so seed them once instead of linking a

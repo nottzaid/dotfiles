@@ -1,5 +1,5 @@
 {
-  description = "Home Manager configuration of zaid";
+  description = "Home Manager configurations for zaid's machines";
   inputs = {
     # Submodules (components/) are deployed by Home Manager, so the flake needs them.
     self.submodules = true;
@@ -14,12 +14,22 @@
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
+      mkHome =
+        host:
+        home-manager.lib.homeManagerConfiguration {
+          inherit pkgs;
+          extraSpecialArgs = { inherit nixpkgs; };
+          modules = [
+            ./home.nix
+            host
+          ];
+        };
     in
     {
-      homeConfigurations."zaid" = home-manager.lib.homeManagerConfiguration {
-        inherit pkgs;
-        extraSpecialArgs = { inherit nixpkgs; };
-        modules = [ ./home.nix ];
+      # One configuration per machine, named after its user.
+      homeConfigurations = {
+        zaid = mkHome ./hosts/desktop.nix;
+        muradkant = mkHome ./hosts/laptop.nix;
       };
     };
 }

@@ -8,7 +8,6 @@
   ];
   home.file = {
     ".local/bin/swash-screenshot" = { source = ../files/bin/swash-screenshot; executable = true; };
-    ".local/bin/hypr-display-reload" = { source = ../files/bin/hypr-display-reload; executable = true; };
     ".local/bin/workspace-stream" = {
       source = ../components/yt-stream-workspace/bin/workspace-stream;
       executable = true;

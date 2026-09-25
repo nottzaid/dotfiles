@@ -1,3 +1,5 @@
+-- Desktop: two HDMI screens (a 24" monitor and a 4K TV).
+--
 -- Display layout. Set MODE, then run `hypr-display-reload` (a plain
 -- `hyprctl reload` leaves HDMI-A-2 without a Wayland output when switching
 -- from mirror to extended: no bar, wallpaper, or launcher on it).

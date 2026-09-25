@@ -29,11 +29,6 @@ start = [ "i3_workspaces", "spacer_1", "active_window" ]
 center = [ ]
 end = [ "media", "network", "sep_1", "temp", "sep_2", "sysmon_2", "sep_3", "sysmon_3", "sep_4", "volume", "sep_5", "clock", "tray", "notifications", "session", "spacer_2" ]
 
-# The big screen's bar lists its own workspaces (extended mode).
-[bar.default.monitor.big]
-match = "HDMI-A-2"
-start = [ "i3_workspaces_big", "spacer_1", "active_window" ]
-
 [shell]
 clipboard_image_action_command = "$HOME/.local/bin/swash-screenshot --stdin --name \"swash-$(date +'%Y-%m-%d_%H:%M:%S').png\""
 launch_apps_as_systemd_services = true
@@ -108,15 +103,9 @@ enabled = [ "zaid/i3bar" ]
 # until Noctalia ships `custom_label` (newer than 5.1.0).
 # Noctalia 5.1 tints an entire plugin widget with its `color` on hover. Keep
 # that tint transparent; the plugin draws explicit colors and per-button
-# hovers. One instance per screen (see [bar.default.monitor.big]).
+# hovers. Each machine sets `monitor` (hosts/<host>.nix: dotfiles.noctalia).
 [widget.i3_workspaces]
 type = "zaid/i3bar:workspaces"
-monitor = "HDMI-A-1"
-color = "#00000000"
-
-[widget.i3_workspaces_big]
-type = "zaid/i3bar:workspaces"
-monitor = "HDMI-A-2"
 color = "#00000000"
 
 [widget.active_window]

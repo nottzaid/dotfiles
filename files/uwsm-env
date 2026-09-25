@@ -9,12 +9,6 @@ export HYPRCURSOR_SIZE=24
 export XCURSOR_THEME="Bibata-Modern-Ice"
 export XCURSOR_SIZE=24
 
-# NVIDIA (GTX 1060, proprietary 580xx driver): VA-API through NVDEC, and the
-# NVIDIA GLX vendor library for XWayland clients.
-export LIBVA_DRIVER_NAME=nvidia
-export NVD_BACKEND=direct
-export __GLX_VENDOR_LIBRARY_NAME=nvidia
-
 # Stop Wine from generating launcher entries/menus for everything it installs
 # (Proton and Lutris already do this for their own prefixes).
 export WINEDLLOVERRIDES="winemenubuilder.exe=d"
