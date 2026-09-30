@@ -58,11 +58,11 @@ links break it.
 
 - **Displays:** set `MODE` in `files/hypr/config/monitors.lua` (`mirror` or
   `extended`), then `hyprctl reload`.
-- **Scratchpad world:** Super+S shows a second set of numbered workspaces
-  over the normal ones (Hyprland special workspaces `special:1`...), one world
-  per screen with the same numbers as its normal workspaces; the same
-  workspace keys and the bar work inside it, and Super+Shift+S sends a window
-  to the other world. `scratch-world` routes every workspace key.
+- **Scratchpad world:** Super+S switches a screen to its own hidden
+  workspaces 1-10 (ids 101-110 on one screen, 201-210 on the next), sliding
+  vertically; the same workspace keys and the bar work inside it, and
+  Super+Shift+S sends a window to the other world. `scratch-world` routes
+  every workspace key.
 - **Launcher:** `launcher-curate` hides entries that cannot open a window
   (terminal programs, missing programs/libraries/files) and applies the rules
   in `files/launcher-curate.rules`; it re-runs whenever applications change.

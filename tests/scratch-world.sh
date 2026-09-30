@@ -24,18 +24,22 @@ EOF
 chmod +x "$TMP/bin/hyprctl" "$TMP/home/.local/bin/workspace-stream"
 
 fail() { printf 'FAIL %s\n' "$*" >&2; exit 1; }
-# state FOCUSED SHOWN1 SHOWN2: HDMI-A-1 has workspaces 1-5 (3 active),
-# HDMI-A-2 has 6-10 (6 active); each shows special workspace SHOWN ("" for
-# none). Scratchpad workspaces 1, 2, and 4 hold windows.
+# state FOCUSED ACTIVE1 ACTIVE2 [HIDDEN_ON_2]: HDMI-A-1 has workspaces 1-5,
+# HDMI-A-2 6-10; each shows workspace ACTIVE (-1337 is the named "gaming").
+# HDMI-A-1's hidden 101, 102, and 104 hold windows; HIDDEN_ON_2 lists more
+# of its hidden ids, left on HDMI-A-2 as after a replug.
 state() {
-    jq -n --arg f "$1" --arg s1 "$2" --arg s2 "$3" '[
-        {name: "HDMI-A-1", focused: ($f == "HDMI-A-1"), activeWorkspace: {id: 3}, specialWorkspace: {name: $s1}},
-        {name: "HDMI-A-2", focused: ($f == "HDMI-A-2"), activeWorkspace: {id: 6}, specialWorkspace: {name: $s2}}]' \
-        >"$TMP/monitors.json"
-    jq -n '[range(1; 11) | {id: ., name: tostring, monitor: (if . <= 5 then "HDMI-A-1" else "HDMI-A-2" end), windows: 0}]
-        + [{id: -98, name: "special:1", monitor: "HDMI-A-1", windows: 1},
-           {id: -97, name: "special:2", monitor: "HDMI-A-1", windows: 1},
-           {id: -96, name: "special:4", monitor: "HDMI-A-1", windows: 2}]' >"$TMP/workspaces.json"
+    jq -n --arg f "$1" --argjson a1 "$2" --argjson a2 "$3" '
+        def ws($id): {id: $id, name: (if $id < 0 then "gaming" else ($id | tostring) end)};
+        [{name: "HDMI-A-1", focused: ($f == "HDMI-A-1"), activeWorkspace: ws($a1)},
+         {name: "HDMI-A-2", focused: ($f == "HDMI-A-2"), activeWorkspace: ws($a2)}]' >"$TMP/monitors.json"
+    jq -n --argjson a1 "$2" --argjson a2 "$3" --argjson moved "[${4:-}]" '
+        [range(1; 11) | {id: ., monitor: (if . <= 5 then "HDMI-A-1" else "HDMI-A-2" end), windows: 0}]
+        + [{id: 101, windows: 1}, {id: 102, windows: 1}, {id: 104, windows: 2}, {id: $a1, windows: 0}]
+          | map(.monitor //= "HDMI-A-1")
+        + [{id: $a2, monitor: "HDMI-A-2", windows: 0}]
+        + ($moved | map({id: ., monitor: "HDMI-A-2", windows: 1}))
+        | unique_by(.id)' >"$TMP/workspaces.json"
 }
 # expect "ARGS" "DISPATCHES" ["EVALS"]: run scratch-world ARGS, let a pending
 # slide restore play out, and compare what it dispatched and evaluated.
@@ -43,72 +47,81 @@ expect() {
     : >"$TMP/log"
     : >"$TMP/evals"
     # shellcheck disable=SC2086
-    env PATH="$TMP/bin:$PATH" HOME="$TMP/home" XDG_RUNTIME_DIR="$TMP/run" FAKE="$TMP" \
-        SCRATCH_WORLD_SLIDE_SECONDS=0 "$ROOT/files/bin/scratch-world" $1
+    env PATH="$TMP/bin:$PATH" HOME="$TMP/home" XDG_RUNTIME_DIR="$TMP/run" XDG_STATE_HOME="$TMP/state" \
+        FAKE="$TMP" SCRATCH_WORLD_SLIDE_SECONDS=0 "$ROOT/files/bin/scratch-world" $1
     for _ in $(seq 50); do
-        [[ -e "$STATE/sideways" ]] || break
+        [[ -e "$STATE/vertical" ]] || break
         sleep 0.05
     done
     [[ "$(cat "$TMP/log")" == "$2" ]] || fail "scratch-world $1: dispatched '$(cat "$TMP/log")', want '$2'"
     [[ "$(cat "$TMP/evals")" == "${3:-}" ]] || fail "scratch-world $1: evaluated '$(cat "$TMP/evals")', want '${3:-}'"
 }
-last() { cat "$STATE/last-$1"; }
-toggle() { printf 'hl.dsp.workspace.toggle_special("%s")' "$1"; }
+recalled() { cat "$STATE/$1-$2"; }
+go() { printf 'hl.dsp.focus({ workspace = "%s" })' "$1"; }
 focus_monitor() { printf 'hl.dsp.focus({ monitor = "%s" })' "$1"; }
-sideways="ScratchWorldSlide(\"%s\")
-ScratchWorldSlide()"
-right="$(printf "$sideways" right)"
-left="$(printf "$sideways" left)"
+slide() { printf 'ScratchWorldSlide("%s")\nScratchWorldSlide()' "$1"; }
 
-# The normal world passes everything through unchanged.
-state HDMI-A-1 "" ""
+# The normal world works as before, but steps over the hidden workspaces
+# (101-104 sit on HDMI-A-1 too).
+state HDMI-A-1 3 6
 expect "focus 7" "workspace-stream workspace 7"
-expect "focus m+1" "workspace-stream workspace m+1"
+expect "focus m+1" "workspace-stream workspace 4"
+expect "focus m-1" "workspace-stream workspace 2"
+expect "focus emptym" "workspace-stream workspace emptym"
 expect "move 4 --silent" 'hl.dsp.window.move({ workspace = "4", follow = false })'
-expect "move m~2" 'hl.dsp.window.move({ workspace = "m~2" })'
-# Each screen enters its own world: first at its lowest number, then wherever
-# it last was. The bar names its screen.
-expect "toggle" "$(toggle 1)"
+expect "move m~2" 'hl.dsp.window.move({ workspace = "2" })'
+state HDMI-A-1 5 6
+expect "focus m+1" "workspace-stream workspace 1"
+
+# Each screen enters its own world, sliding down: first at 1 of its own
+# block, then wherever it last was. The bar names its screen.
+state HDMI-A-1 3 6
+expect "toggle" "$(go 101)" "$(slide top)"
+[[ "$(recalled normal HDMI-A-1)" == 3 ]] || fail "entering did not remember the normal workspace"
 expect "--monitor HDMI-A-2 toggle" "$(focus_monitor HDMI-A-2)
-$(toggle 6)"
+$(go 201)" "$(slide top)"
+[[ "$(cat "$TMP/state/scratch-world/bases")" == "HDMI-A-1 100
+HDMI-A-2 200" ]] || fail "screens did not get their own blocks"
 echo 4 >"$STATE/last-HDMI-A-1"
-expect "toggle" "$(toggle 4)"
-expect "send" 'hl.dsp.window.move({ workspace = "special:4", follow = false })'
-expect "--monitor HDMI-A-1 focus m+1" "workspace-stream workspace m+1"
+expect "toggle" "$(go 104)" "$(slide top)"
+expect "send" 'hl.dsp.window.move({ workspace = "104", follow = false })'
 
-# Inside, the same keys walk this screen's scratchpad workspaces, sliding
-# sideways like normal workspaces; numbers from the other screen open there.
-state HDMI-A-1 "special:2" ""
-expect "focus 7" "$(focus_monitor HDMI-A-2)
-$(toggle 7)"
-[[ "$(last HDMI-A-2)" == 7 ]] || fail "the other screen did not remember its workspace"
+# Inside, the same keys walk this screen's 1-10 with the normal slide.
+state HDMI-A-1 102 6
+expect "focus 7" "$(go 107)"
+[[ "$(recalled last HDMI-A-1)" == 7 ]] || fail "focus did not remember the workspace"
 expect "focus 2" ""
-expect "focus m+1" "$(toggle 3)" "$right"
-[[ "$(last HDMI-A-1)" == 3 ]] || fail "focus did not remember the workspace"
-expect "focus m-1" "$(toggle 1)" "$left"
-expect "focus emptym" "$(toggle 3)" "$right"
-state HDMI-A-1 "special:5" ""
-expect "focus m+1" "$(toggle 1)" "$left"
-state HDMI-A-1 "special:1" "special:7"
-expect "focus m-1" "$(toggle 5)" "$right"
-expect "focus 8" "$(focus_monitor HDMI-A-2)
-$(toggle 8)" "$right"
+expect "focus 11" ""
+expect "focus m+1" "$(go 103)"
+expect "focus m-1" "$(go 101)"
+expect "focus emptym" "$(go 103)"
+state HDMI-A-1 110 6
+expect "focus m+1" "$(go 101)"
+state HDMI-A-1 101 6
+expect "focus m-1" "$(go 110)"
+# A move right after entering puts the normal slide back first.
+echo pending >"$STATE/vertical"
+expect "focus 3" "$(go 103)" "ScratchWorldSlide()"
 echo 1 >"$STATE/last-HDMI-A-1"
-expect "move 4 --silent" 'hl.dsp.window.move({ workspace = "special:4", follow = false })'
-[[ "$(last HDMI-A-1)" == 1 ]] || fail "a silent move changed the last workspace"
-expect "move m~3" 'hl.dsp.window.move({ workspace = "special:3" })' "$right"
-[[ "$(last HDMI-A-1)" == 3 ]] || fail "a followed move did not remember the workspace"
-expect "move m~9" ""
-# Super+Shift+S sends a window home; Super+S leaves and remembers.
+expect "move 4 --silent" 'hl.dsp.window.move({ workspace = "104", follow = false })'
+[[ "$(recalled last HDMI-A-1)" == 1 ]] || fail "a silent move changed the last workspace"
+expect "move m~3" 'hl.dsp.window.move({ workspace = "103" })'
+[[ "$(recalled last HDMI-A-1)" == 3 ]] || fail "a followed move did not remember the workspace"
+expect "move 11" ""
+# Super+Shift+S sends a window home; Super+S leaves, sliding up, and remembers.
 expect "send" 'hl.dsp.window.move({ workspace = "3", follow = false })'
-expect "toggle" "$(toggle 1)"
-[[ "$(last HDMI-A-1)" == 1 ]] || fail "leaving did not remember the workspace"
-# Leaving right after a sideways move restores the vertical slide first.
-echo pending >"$STATE/sideways"
-expect "toggle" "$(toggle 1)" "ScratchWorldSlide()"
+expect "toggle" "workspace-stream workspace 3" "$(slide bottom)"
+[[ "$(recalled last HDMI-A-1)" == 1 ]] || fail "leaving did not remember the workspace"
+# After replugging, the screen's hidden workspace is brought back to it.
+state HDMI-A-1 101 6 105
+expect "focus 5" 'hl.dsp.workspace.move({ workspace = "105", monitor = "HDMI-A-1" })
+'"$(go 105)"
 
-# The legacy unnamed scratchpad is not part of the world.
-state HDMI-A-1 "special:special" ""
-expect "focus 2" "workspace-stream workspace 2"
+# Named normal workspaces are remembered by name.
+state HDMI-A-1 -1337 6
+echo 1 >"$STATE/last-HDMI-A-1"
+expect "toggle" "$(go 101)" "$(slide top)"
+state HDMI-A-1 101 6
+expect "toggle" "workspace-stream workspace name:gaming" "$(slide bottom)"
 
-printf '%s\n' 'PASS scratch-world keeps a world per screen, slides like workspaces inside it, and remembers where you were'
+printf '%s\n' 'PASS scratch-world keeps a hidden 1-10 per screen, slides vertically only in and out, and remembers where you were'
