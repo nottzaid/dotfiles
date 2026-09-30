@@ -43,14 +43,8 @@ hl.bind(mainMod .. " + SHIFT + H", hl.dsp.window.move({ direction = "l" }))
 hl.bind(mainMod .. " + SHIFT + L", hl.dsp.window.move({ direction = "r" }))
 -- Monitor moves by number are superseded by the repo-style workspace loop
 -- below: mainMod + SHIFT + [0-9] moves the active window to workspace [1-10].
--- Moving windows across monitors is still available via
--- mainMod + SHIFT + mouse_up/down and mainMod + CONTROL + SHIFT + Right/Left.
-hl.bind(mainMod .. " + SHIFT + mouse_up",             hl.dsp.window.move({ monitor   = "-1" }))
-hl.bind(mainMod .. " + SHIFT + mouse_down",           hl.dsp.window.move({ monitor   = "+1" }))
 hl.bind(mainMod .. " + CONTROL + SHIFT + Right",      hl.dsp.exec_cmd(worldCall .. "move m+1"))
 hl.bind(mainMod .. " + CONTROL + SHIFT + Left",       hl.dsp.exec_cmd(worldCall .. "move m-1"))
-hl.bind(mainMod .. " + CONTROL + SHIFT + mouse_up",   hl.dsp.exec_cmd(worldCall .. "move m-1"))
-hl.bind(mainMod .. " + CONTROL + SHIFT + mouse_down", hl.dsp.exec_cmd(worldCall .. "move m+1"))
 for i = 1, NUM_WPM do
     local key = i % 10
     hl.bind(mainMod .. " + SHIFT + CONTROL + " .. digitCode(key), hl.dsp.exec_cmd(worldCall .. "move m~" .. i))
