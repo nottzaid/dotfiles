@@ -2,7 +2,9 @@
 -- i3bar-style workspace buttons for Hyprland, romanticized: square boxes with
 -- a 1px border, i3's blue for the focused workspace, soft Catppuccin tones for
 -- the rest, one per workspace on this bar's monitor. Clicking or scrolling
--- goes through ~/.local/bin/workspace-stream, like the keybinds.
+-- goes through ~/.local/bin/scratch-world, like the keybinds. While this
+-- monitor's scratchpad world (Super+S) covers it, the buttons are that
+-- world's workspaces instead; a last button enters or leaves it.
 
 local COLORS = {
   focused = { border = "#4c7899", bg = "#285577", hover = "#3e6685", fg = "#ffffff", weight = "bold" },
@@ -10,10 +12,12 @@ local COLORS = {
   occupied = { border = "#313244", bg = "#1e1e2e", hover = "#2c2c3d", fg = "#a6adc8" },
   empty = { border = "#1e1e2e", bg = "#181825", hover = "#20212f", fg = "#6c7086" },
   urgent = { border = "#f38ba8", bg = "#f38ba8", hover = "#f59cb5", fg = "#1e1e2e", weight = "bold" },
+  scratchpad = { border = "#fab387", bg = "#fab387", hover = "#fbbb93", fg = "#1e1e2e", weight = "bold" }, -- world shown here
 }
+local SCRATCH = "^special:(%d+)$" -- scratchpad world workspace N (scratch-world)
 -- Buttons span the full bar height; keep in sync with [bar.default] thickness.
 local BAR_THICKNESS = 36
-local SWITCH = noctalia.expandPath("~/.local/bin/workspace-stream")
+local WORLD = noctalia.expandPath("~/.local/bin/scratch-world")
 
 local workspaces, monitors, urgent = {}, {}, {}
 local hoveredWorkspace = nil
@@ -29,27 +33,86 @@ local function hyprctlJson(what, onValue)
   end)
 end
 
+local function barOutput()
+  local configured = noctalia.getConfig("monitor")
+  return barWidget.outputName() or (configured ~= "" and configured or nil)
+end
+
+-- Acts on this bar's monitor, whichever one has focus.
+local function world(...)
+  local output = barOutput()
+  local args = output and { WORLD, "--monitor", output } or { WORLD }
+  for _, arg in ipairs({ ... }) do
+    table.insert(args, arg)
+  end
+  noctalia.runAsync(args)
+end
+
 local function switchTo(target)
-  noctalia.runAsync({ SWITCH, "workspace", target })
+  world("focus", target)
+end
+
+local function toggleWorld()
+  world("toggle")
+end
+
+local function button(key, text, c, onClick)
+  return ui.row({
+    key = key,
+    fill = hoveredWorkspace == key and c.hover or c.bg,
+    border = c.border,
+    borderWidth = 1,
+    paddingH = 12,
+    align = "center",
+    justify = "center",
+    onHover = "onWorkspaceHover",
+    onClick = onClick,
+  }, {
+    ui.label({ text = text, color = c.fg, fontWeight = c.weight or "medium", baseline = "inkCentered" }),
+  })
 end
 
 local function render()
-  local configured = noctalia.getConfig("monitor")
-  local output = barWidget.outputName() or (configured ~= "" and configured or nil)
-  local focusedMonitor, visibleOn = nil, {}
+  local output = barOutput()
+  local focusedMonitor, visibleOn, scratchOn = nil, {}, {}
   for _, m in ipairs(monitors) do
     visibleOn[m.activeWorkspace.id] = m.name
     if m.focused then
       focusedMonitor = m.name
     end
+    local n = m.specialWorkspace and tonumber(string.match(m.specialWorkspace.name, SCRATCH))
+    if n then
+      scratchOn[m.name] = n
+    end
+  end
+  -- Inside the scratchpad world the buttons are its workspaces: the one
+  -- covering this monitor is on screen, and no normal workspace is.
+  local here = scratchOn[output or focusedMonitor]
+  if here then
+    visibleOn = { [here] = output or focusedMonitor }
   end
 
-  local shown = {}
+  -- Scratchpad workspace N belongs to the monitor with normal workspace N.
+  local ownerOf = {}
   for _, ws in ipairs(workspaces) do
+    if ws.id > 0 then
+      ownerOf[ws.id] = ws.monitor
+    end
+  end
+
+  local shown, scratchWindows = {}, 0
+  for _, ws in ipairs(workspaces) do
+    local n = tonumber(string.match(ws.name, SCRATCH))
+    local owner = n and ownerOf[n] or ws.monitor
+    local ours = output == nil or owner == output or (here ~= nil and n == here)
+    if n and ours then
+      scratchWindows = scratchWindows + ws.windows
+    end
+    local id = if here then n elseif ws.id > 0 then ws.id else nil
     -- Like i3: a workspace shows while it has windows or is on screen.
-    local exists = ws.windows > 0 or visibleOn[ws.id] ~= nil
-    if ws.id > 0 and exists and (output == nil or ws.monitor == output) then
-      table.insert(shown, ws)
+    local exists = id ~= nil and (ws.windows > 0 or visibleOn[id] ~= nil)
+    if exists and ours then
+      table.insert(shown, { id = id, name = here and tostring(n) or ws.name, windows = ws.windows })
     end
   end
   table.sort(shown, function(a, b)
@@ -59,28 +122,22 @@ local function render()
   local buttons = {}
   for _, ws in ipairs(shown) do
     local state = ws.windows > 0 and "occupied" or "empty"
-    if urgent[ws.id] then
+    if urgent[ws.id] and not here then
       state = "urgent"
     elseif visibleOn[ws.id] then
       state = visibleOn[ws.id] == focusedMonitor and "focused" or "active"
     end
-    local c = COLORS[state]
     local id = tostring(ws.id)
-    table.insert(buttons, ui.row({
-      key = id,
-      fill = hoveredWorkspace == id and c.hover or c.bg,
-      border = c.border,
-      borderWidth = 1,
-      paddingH = 12,
-      align = "center",
-      justify = "center",
-      onHover = "onWorkspaceHover",
-      onClick = function()
-        switchTo(id)
-      end,
-    }, {
-      ui.label({ text = ws.name ~= "" and ws.name or id, color = c.fg, fontWeight = c.weight or "medium", baseline = "inkCentered" }),
-    }))
+    table.insert(buttons, button(id, ws.name ~= "" and ws.name or id, COLORS[state], function()
+      switchTo(id)
+    end))
+  end
+
+  -- The scratchpad world covers the normal workspaces: peach while it is shown
+  -- here, dim with its window count while hidden. Clicking enters or leaves it.
+  if here or scratchWindows > 0 then
+    local text = here and "scratchpad" or ("scratchpad · " .. scratchWindows)
+    table.insert(buttons, button("scratchpad", text, here and COLORS.scratchpad or COLORS.occupied, toggleWorld))
   end
   barWidget.render(ui.row({ gap = 2, height = BAR_THICKNESS }, buttons))
 end
@@ -123,7 +180,7 @@ local function onEvent(line)
       end
       refresh()
     end)
-  elseif event and (event:find("workspace") or event:find("mon") or event:find("window")) then
+  elseif event and (event:find("workspace") or event:find("mon") or event:find("window") or event:find("special")) then
     refresh()
   end
 end

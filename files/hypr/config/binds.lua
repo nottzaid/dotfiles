@@ -1,6 +1,9 @@
 local mainMod = "SUPER"
 local noctCall = "noctalia msg "
 local launchPrefix = "uwsm app -- " -- if you are not using UWSM, make this empty (e.g. "")
+-- Workspace keys go through scratch-world, so they act on whichever world is
+-- shown: the normal workspaces, or the scratchpad world over them (Super+S).
+local worldCall = "~/.local/bin/scratch-world "
 
 -- Bind number-row shortcuts by physical keycode so they work across keyboard layouts.
 local function digitCode(d)
@@ -44,13 +47,13 @@ hl.bind(mainMod .. " + SHIFT + L", hl.dsp.window.move({ direction = "r" }))
 -- mainMod + SHIFT + mouse_up/down and mainMod + CONTROL + SHIFT + Right/Left.
 hl.bind(mainMod .. " + SHIFT + mouse_up",             hl.dsp.window.move({ monitor   = "-1" }))
 hl.bind(mainMod .. " + SHIFT + mouse_down",           hl.dsp.window.move({ monitor   = "+1" }))
-hl.bind(mainMod .. " + CONTROL + SHIFT + Right",      hl.dsp.window.move({ workspace = "m+1" }))
-hl.bind(mainMod .. " + CONTROL + SHIFT + Left",       hl.dsp.window.move({ workspace = "m-1" }))
-hl.bind(mainMod .. " + CONTROL + SHIFT + mouse_up",   hl.dsp.window.move({ workspace = "m-1" }))
-hl.bind(mainMod .. " + CONTROL + SHIFT + mouse_down", hl.dsp.window.move({ workspace = "m+1" }))
+hl.bind(mainMod .. " + CONTROL + SHIFT + Right",      hl.dsp.exec_cmd(worldCall .. "move m+1"))
+hl.bind(mainMod .. " + CONTROL + SHIFT + Left",       hl.dsp.exec_cmd(worldCall .. "move m-1"))
+hl.bind(mainMod .. " + CONTROL + SHIFT + mouse_up",   hl.dsp.exec_cmd(worldCall .. "move m-1"))
+hl.bind(mainMod .. " + CONTROL + SHIFT + mouse_down", hl.dsp.exec_cmd(worldCall .. "move m+1"))
 for i = 1, NUM_WPM do
     local key = i % 10
-    hl.bind(mainMod .. " + SHIFT + CONTROL + " .. digitCode(key), hl.dsp.window.move({ workspace = "m~" .. i }))
+    hl.bind(mainMod .. " + SHIFT + CONTROL + " .. digitCode(key), hl.dsp.exec_cmd(worldCall .. "move m~" .. i))
 end
 
 -- Move & Resize with mouse
@@ -140,27 +143,28 @@ hl.bind(mainMod .. " + A", hl.dsp.exec_cmd(noctCall .. "panel-toggle control-cen
 -- (repo) Switch workspaces / move the active window, same scheme as
 -- muradkant/dotfiles: mainMod + [0-9] focuses workspace [1-10] (10 maps to 0),
 -- mainMod + SHIFT + [0-9] moves the window there. Focus routes through the
--- workspace-stream wrapper so the stream workspace stays pinned to the
--- YT-STREAM output during normal navigation (the repo's exact wiring).
+-- workspace-stream wrapper (via scratch-world) so the stream workspace stays
+-- pinned to the YT-STREAM output during normal navigation (the repo's exact wiring).
 for i = 1, 10 do
     local key = i % 10 -- 10 maps to key 0
-    hl.bind(mainMod .. " + " .. digitCode(key),         hl.dsp.exec_cmd("~/.local/bin/workspace-stream workspace " .. i))
-    hl.bind(mainMod .. " + SHIFT + " .. digitCode(key), hl.dsp.window.move({ workspace = i, follow = false }))
+    hl.bind(mainMod .. " + " .. digitCode(key),         hl.dsp.exec_cmd(worldCall .. "focus " .. i))
+    hl.bind(mainMod .. " + SHIFT + " .. digitCode(key), hl.dsp.exec_cmd(worldCall .. "move " .. i .. " --silent"))
 end
 
 -- Move to adjacent workspaces and next empty on a given monitor
-hl.bind(mainMod .. " + CONTROL + Right",       hl.dsp.focus({ workspace = "m+1" }))
-hl.bind(mainMod .. " + CONTROL + Left",        hl.dsp.focus({ workspace = "m-1" }))
-hl.bind(mainMod .. " + CONTROL + Down",        hl.dsp.focus({ workspace = "emptym" }))
+hl.bind(mainMod .. " + CONTROL + Right",       hl.dsp.exec_cmd(worldCall .. "focus m+1"))
+hl.bind(mainMod .. " + CONTROL + Left",        hl.dsp.exec_cmd(worldCall .. "focus m-1"))
+hl.bind(mainMod .. " + CONTROL + Down",        hl.dsp.exec_cmd(worldCall .. "focus emptym"))
 
 -- Scroll through existing workspaces & monitors
 -- (repo) Scroll through workspaces via the wrapper (mouse wheel down = next,
 -- up = previous), keeping the stream workspace pinned like the dotfiles config.
-hl.bind(mainMod .. " + mouse_down", hl.dsp.exec_cmd("~/.local/bin/workspace-stream workspace m+1"))
-hl.bind(mainMod .. " + mouse_up",   hl.dsp.exec_cmd("~/.local/bin/workspace-stream workspace m-1"))
-hl.bind(mainMod .. " + CONTROL + mouse_up",   hl.dsp.focus({ workspace = "m-1" }))
-hl.bind(mainMod .. " + CONTROL + mouse_down", hl.dsp.focus({ workspace = "m+1" }))
+hl.bind(mainMod .. " + mouse_down", hl.dsp.exec_cmd(worldCall .. "focus m+1"))
+hl.bind(mainMod .. " + mouse_up",   hl.dsp.exec_cmd(worldCall .. "focus m-1"))
+hl.bind(mainMod .. " + CONTROL + mouse_up",   hl.dsp.exec_cmd(worldCall .. "focus m-1"))
+hl.bind(mainMod .. " + CONTROL + mouse_down", hl.dsp.exec_cmd(worldCall .. "focus m+1"))
 
--- Special workspace (scratchpad)
-hl.bind(mainMod .. " + SHIFT + S", hl.dsp.window.move({ workspace = "special" }))
-hl.bind(mainMod .. " + S",         hl.dsp.workspace.toggle_special())
+-- Scratchpad world: Super+S enters it at the last workspace used there, or
+-- leaves it; Super+Shift+S sends the window to the other world.
+hl.bind(mainMod .. " + SHIFT + S", hl.dsp.exec_cmd(worldCall .. "send"))
+hl.bind(mainMod .. " + S",         hl.dsp.exec_cmd(worldCall .. "toggle"))

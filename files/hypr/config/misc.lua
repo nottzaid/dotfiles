@@ -2,6 +2,11 @@ hl.config({
     dwindle = {
         preserve_split = true,
     },
+    binds = {
+        -- Switching workspaces (keys, scroll, bar) closes an open scratchpad;
+        -- otherwise it stays on top and the switch happens invisibly beneath it.
+        hide_special_on_workspace_change = true,
+    },
     misc = {
         col = {
             splash = CACHYLGREEN,

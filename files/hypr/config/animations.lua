@@ -16,5 +16,18 @@ hl.curve("rubber",         { type = "spring", mass = 1, stiffness = 200,  dampen
 hl.animation({ leaf = "global",              enabled = true, speed = 3, bezier = "quick"                 })
 hl.animation({ leaf = "windows",             enabled = true, speed = 3, spring = "easy",  style = "slide" })
 hl.animation({ leaf = "workspaces",          enabled = true, speed = 5, bezier = "quick", style = "slide" })
-hl.animation({ leaf = "specialWorkspaceIn",  enabled = true, speed = 2, bezier = "quick", style = "slide top"})
-hl.animation({ leaf = "specialWorkspaceOut", enabled = true, speed = 2, bezier = "quick", style = "slide bottom"})
+
+-- Special workspaces (the scratchpad world, Super+S) slide in and out
+-- vertically. Moving between scratchpad world workspaces should look like
+-- moving between the workspaces above instead, so scratch-world calls
+-- ScratchWorldSlide("right"/"left") through `hyprctl eval` for those moves
+-- ("right" toward a higher number) and ScratchWorldSlide() to restore.
+function ScratchWorldSlide(direction)
+    local speed, inStyle, outStyle = 2, "slide top", "slide bottom"
+    if direction then
+        speed, inStyle, outStyle = 5, "slide " .. direction, "slide " .. direction -- as "workspaces"
+    end
+    hl.animation({ leaf = "specialWorkspaceIn",  enabled = true, speed = speed, bezier = "quick", style = inStyle })
+    hl.animation({ leaf = "specialWorkspaceOut", enabled = true, speed = speed, bezier = "quick", style = outStyle })
+end
+ScratchWorldSlide()
