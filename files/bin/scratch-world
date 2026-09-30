@@ -1,33 +1,35 @@
 #!/usr/bin/env bash
-# The scratchpad world: a second set of numbered workspaces laid over the
-# normal ones. Scratchpad workspace N is Hyprland's special workspace
-# "special:N". A monitor shows at most one special workspace, so a monitor is
-# "in the scratchpad world" while it shows one of them. Each monitor has its
-# own: scratchpad workspace N belongs to the monitor that owns normal
-# workspace N (1-5 on one screen, 6-10 on the other), just like the normal
-# workspaces, and each monitor remembers where it last was in its world.
+# The scratchpad world: a second set of workspaces 1-10 on each screen, kept
+# out of sight behind the normal ones. They are ordinary Hyprland workspaces
+# with ids above 100 (the bar and every workspace key skip them in the normal
+# world): each screen gets its own block, e.g. 101-110 for one screen and
+# 201-210 for the other, recorded per screen name so it survives replugging.
+# A screen is "in its scratchpad world" while it shows one of its block.
 #
 # Every workspace keybind and the bar go through this script, so the same keys
 # work in both worlds:
-#   scratch-world toggle                  Super+S: enter this monitor's world at
+#   scratch-world toggle                  Super+S: enter this screen's world at
 #                                         its last workspace, or leave it
 #   scratch-world send                    Super+Shift+S: move the focused window
 #                                         to the other world (where you last were)
 #   scratch-world focus SELECTOR          show workspace N, m+1, m-1, or emptym
 #   scratch-world move SELECTOR [--silent]  move the focused window there (m~I too)
-# --monitor NAME before the command acts on that monitor (the bar's own).
+# --monitor NAME before the command acts on that screen (the bar's own).
 #
-# In the normal world, focus goes through workspace-stream and move is the
-# plain Hyprland dispatch, exactly as the keybinds did before. In the
-# scratchpad world, m+1/m-1/m~I/emptym walk the monitor's own numbers, and
-# moving between its workspaces slides sideways like normal workspaces do;
-# only entering and leaving use the vertical special-workspace slide.
+# In the normal world, focus still goes through workspace-stream and moves are
+# plain Hyprland dispatches; m+1/m-1/m~I are resolved here so they skip the
+# hidden workspaces. Moving within either world uses the normal workspace
+# slide; entering and leaving slide vertically (ScratchWorldSlide in
+# files/hypr/config/animations.lua).
 set -Eeuo pipefail
 
+HIDDEN=100 # workspace ids above this belong to a scratchpad world (also in the bar)
+SIZE=10    # scratchpad workspaces per screen
 STATE_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/scratch-world"
-# How long the sideways slide stays configured: a little over the
-# "workspaces" animation (speed 5 = 500 ms, files/hypr/config/animations.lua).
-SLIDE_SECONDS="${SCRATCH_WORLD_SLIDE_SECONDS:-0.6}"
+BASES="${XDG_STATE_HOME:-$HOME/.local/state}/scratch-world/bases"
+# How long the vertical slide stays configured: a little over its speed of 2
+# (200 ms, animations.lua).
+SLIDE_SECONDS="${SCRATCH_WORLD_SLIDE_SECONDS:-0.3}"
 
 die() {
     printf 'scratch-world: %s\n' "$*" >&2
@@ -44,9 +46,8 @@ if [[ "${1:-}" == "--monitor" ]]; then
     shift 2
 fi
 
-mkdir -p "$STATE_DIR"
-# One at a time: fast scroll ticks must each see the previous tick's result,
-# or two of them would toggle the same workspace and close it.
+mkdir -p "$STATE_DIR" "${BASES%/*}"
+# One at a time: fast scroll ticks must each see the previous tick's result.
 exec 9>"$STATE_DIR/lock"
 flock 9
 
@@ -57,110 +58,126 @@ if [[ -n "$monitor" && "$monitor" != "$focused" ]]; then
     dispatch "hl.dsp.focus({ monitor = \"$monitor\" })"
     focused="$monitor"
 fi
-active="$(jq -r --arg m "$focused" '.[] | select(.name == $m) | .activeWorkspace.id' <<<"$monitors")"
+{ read -r active; read -r active_name; } < <(
+    jq -r --arg m "$focused" '.[] | select(.name == $m) | .activeWorkspace | .id, .name' <<<"$monitors"
+)
+# How to come back to the active workspace: named ones have negative ids,
+# and a negative number would mean "that many back".
+here="$active"
+((active > 0)) || here="name:$active_name"
 
-# The scratchpad world workspace MONITOR shows, if any.
-scratch_on() {
-    local shown
-    shown="$(jq -r --arg m "$1" '.[] | select(.name == $m) | .specialWorkspace.name' <<<"$monitors")"
-    if [[ "$shown" =~ ^special:([1-9][0-9]*)$ ]]; then
-        printf '%s\n' "${BASH_REMATCH[1]}"
-    fi
+# This screen's block: workspace base+N is its scratchpad workspace N. New
+# screens take the next free hundred.
+base=""
+[[ -e "$BASES" ]] && base="$(awk -v m="$focused" '$1 == m { print $2 }' "$BASES")"
+if [[ -z "$base" ]]; then
+    top=0
+    [[ -e "$BASES" ]] && top="$(awk 'BEGIN { b = 0 } $2 > b { b = $2 } END { print b }' "$BASES")"
+    base=$((top + HIDDEN))
+    printf '%s %s\n' "$focused" "$base" >>"$BASES"
+fi
+
+current="" # the scratchpad workspace number shown here, in the scratchpad world
+if ((active > base && active <= base + SIZE)); then
+    current=$((active - base))
+fi
+
+windows_on() {
+    jq -r --argjson id "$1" '[.[] | select(.id == $id) | .windows] | add // 0' <<<"$workspaces"
 }
-current="$(scratch_on "$focused")"
 
-# The numbers of MONITOR's normal workspaces, in order.
-numbers_of() {
-    jq -r --arg m "$1" '[.[] | select(.id > 0 and .monitor == $m) | .id] | sort | .[]' <<<"$workspaces"
-}
-
-# The monitor that owns number N; numbers no monitor has stay here.
-owner() {
-    local m
-    m="$(jq -r --argjson n "$1" '.[] | select(.id == $n) | .monitor' <<<"$workspaces")"
-    printf '%s\n' "${m:-$focused}"
-}
-
-# MONITOR's last scratchpad world workspace, at first its lowest number.
-last() {
-    local n
-    local -a numbers
-    n="$(cat "$STATE_DIR/last-$1" 2>/dev/null || true)"
-    if [[ ! "$n" =~ ^[1-9][0-9]*$ ]]; then
-        mapfile -t numbers < <(numbers_of "$1")
-        n="${numbers[0]:-1}"
-    fi
-    printf '%s\n' "$n"
+# Where this screen last was in each world ("last": scratchpad number,
+# "normal": workspace), else DEFAULT.
+recall() {
+    local value
+    value="$(cat "$STATE_DIR/$1-$focused" 2>/dev/null || true)"
+    printf '%s\n' "${value:-$2}"
 }
 
 remember() {
-    printf '%s\n' "$2" >"$STATE_DIR/last-$1"
+    printf '%s\n' "$2" >"$STATE_DIR/$1-$focused"
 }
 
-# Moving from scratchpad workspace FROM to TO slides sideways like normal
-# workspaces ("right" toward a higher number). Hyprland reads the style when
-# an animation starts, so the vertical slide comes back once this one has
-# played, unless another sideways move came since.
-slide_sideways() {
-    local direction=left token=$$
-    (($2 > $1)) && direction=right
-    hyprctl eval "ScratchWorldSlide(\"$direction\")" >/dev/null
-    printf '%s\n' "$token" >"$STATE_DIR/sideways"
+# Entering (EDGE top) or leaving (bottom) slides vertically; Hyprland reads
+# the style when a switch starts, so the normal slide comes back once this one
+# has played, unless another vertical switch came since.
+slide_vertical() {
+    local token=$$
+    hyprctl eval "ScratchWorldSlide(\"$1\")" >/dev/null
+    printf '%s\n' "$token" >"$STATE_DIR/vertical"
     (
         exec 9>&-
         sleep "$SLIDE_SECONDS"
         exec 9>"$STATE_DIR/lock"
         flock 9
-        [[ "$(cat "$STATE_DIR/sideways" 2>/dev/null)" == "$token" ]] || exit 0
+        [[ "$(cat "$STATE_DIR/vertical" 2>/dev/null)" == "$token" ]] || exit 0
         hyprctl eval 'ScratchWorldSlide()' >/dev/null
-        rm -f "$STATE_DIR/sideways"
+        rm -f "$STATE_DIR/vertical"
     ) >/dev/null 2>&1 &
 }
 
-# Entering or leaving the world: make sure the vertical slide is back.
-slide_vertical() {
-    [[ -e "$STATE_DIR/sideways" ]] || return 0
+# Moving within a world: make sure the normal slide is back.
+slide_normal() {
+    [[ -e "$STATE_DIR/vertical" ]] || return 0
     hyprctl eval 'ScratchWorldSlide()' >/dev/null
-    rm -f "$STATE_DIR/sideways"
+    rm -f "$STATE_DIR/vertical"
 }
 
-# Show scratchpad workspace N on the monitor that owns it, like Super+N
-# does for normal workspaces on the other screen.
+# Show scratchpad workspace N here, entering the world if needed.
 show() {
-    local n="$1" target on
-    target="$(owner "$n")"
-    if [[ "$target" != "$focused" ]]; then
-        dispatch "hl.dsp.focus({ monitor = \"$target\" })"
-    fi
-    on="$(scratch_on "$target")"
-    [[ "$n" == "$on" ]] && return
-    if [[ -n "$on" ]]; then
-        slide_sideways "$on" "$n"
+    local id=$((base + $1))
+    [[ "$1" == "$current" ]] && return
+    if [[ -z "$current" ]]; then
+        remember normal "$here"
+        slide_vertical top
     else
-        slide_vertical
+        slide_normal
     fi
-    # toggle_special shows a workspace that is not open on this monitor,
-    # replacing the one that is.
-    dispatch "hl.dsp.workspace.toggle_special(\"$n\")"
-    remember "$target" "$n"
+    # After replugging, a screen's hidden workspaces may sit on another screen.
+    if jq -e --argjson id "$id" --arg m "$focused" 'any(.[]; .id == $id and .monitor != $m)' \
+        <<<"$workspaces" >/dev/null; then
+        dispatch "hl.dsp.workspace.move({ workspace = \"$id\", monitor = \"$focused\" })"
+    fi
+    dispatch "hl.dsp.focus({ workspace = \"$id\" })"
+    remember last "$1"
 }
 
-# SELECTOR -> scratchpad workspace number, mirroring Hyprland's meaning of it.
-resolve() {
-    local selector="$1" n i
+# The normal workspaces of this screen, in order.
+normal_numbers() {
+    jq -r --arg m "$focused" --argjson hidden "$HIDDEN" \
+        '[.[] | select(.id > 0 and .id <= $hidden and .monitor == $m) | .id] | sort | .[]' <<<"$workspaces"
+}
+
+first_normal() {
     local -a numbers
-    mapfile -t numbers < <(numbers_of "$focused")
-    ((${#numbers[@]} > 0)) || numbers=("$current")
+    mapfile -t numbers < <(normal_numbers)
+    printf '%s\n' "${numbers[0]:-1}"
+}
+
+# SELECTOR -> workspace number in this world, mirroring Hyprland's meaning:
+# m+1/m-1 step through the screen's workspaces (1-10 in the scratchpad world)
+# with wrapping, m~I is the I-th, emptym the first without windows.
+resolve() {
+    local selector="$1" position n i
+    local -a numbers
+    if [[ -n "$current" ]]; then
+        position="$current"
+        mapfile -t numbers < <(seq 1 "$SIZE")
+    else
+        position="$active"
+        mapfile -t numbers < <(normal_numbers)
+        ((${#numbers[@]} > 0)) || numbers=("$active")
+    fi
     case "$selector" in
     m+1)
         for n in "${numbers[@]}"; do
-            ((n > current)) && { printf '%s\n' "$n"; return; }
+            ((n > position)) && { printf '%s\n' "$n"; return; }
         done
         printf '%s\n' "${numbers[0]}"
         ;;
     m-1)
         for ((i = ${#numbers[@]} - 1; i >= 0; i--)); do
-            ((numbers[i] < current)) && { printf '%s\n' "${numbers[i]}"; return; }
+            ((numbers[i] < position)) && { printf '%s\n' "${numbers[i]}"; return; }
         done
         printf '%s\n' "${numbers[-1]}"
         ;;
@@ -170,17 +187,15 @@ resolve() {
         printf '%s\n' "${numbers[n - 1]}"
         ;;
     emptym)
+        [[ -n "$current" ]] || { printf 'emptym\n'; return; } # Hyprland's own
         for n in "${numbers[@]}"; do
-            if jq -e --arg name "special:$n" 'all(.[]; .name != $name or .windows == 0)' \
-                <<<"$workspaces" >/dev/null; then
-                printf '%s\n' "$n"
-                return
-            fi
+            (($(windows_on $((base + n))) == 0)) && { printf '%s\n' "$n"; return; }
         done
         return 1
         ;;
     *)
         [[ "$selector" =~ ^[1-9][0-9]*$ ]] || die "unsupported selector: $selector"
+        [[ -z "$current" ]] || ((selector <= SIZE)) || return 1
         printf '%s\n' "$selector"
         ;;
     esac
@@ -189,46 +204,43 @@ resolve() {
 case "${1:-}" in
 toggle)
     if [[ -n "$current" ]]; then
-        remember "$focused" "$current"
-        slide_vertical
-        dispatch "hl.dsp.workspace.toggle_special(\"$current\")"
-    else
-        show "$(last "$focused")"
+        remember last "$current"
+        slide_vertical bottom
+        exec 9>&-
+        exec "$HOME/.local/bin/workspace-stream" workspace "$(recall normal "$(first_normal)")"
     fi
+    show "$(recall last 1)"
     ;;
 send)
     if [[ -n "$current" ]]; then
         # Back to the normal workspace underneath, the last one used there.
-        dispatch "hl.dsp.window.move({ workspace = \"$active\", follow = false })"
+        dispatch "hl.dsp.window.move({ workspace = \"$(recall normal "$(first_normal)")\", follow = false })"
     else
-        dispatch "hl.dsp.window.move({ workspace = \"special:$(last "$focused")\", follow = false })"
+        dispatch "hl.dsp.window.move({ workspace = \"$((base + $(recall last 1)))\", follow = false })"
     fi
     ;;
 focus)
-    selector="${2:?missing workspace selector}"
-    if [[ -z "$current" ]]; then
+    n="$(resolve "${2:?missing workspace selector}")" || exit 0
+    if [[ -n "$current" ]]; then
+        show "$n"
+    else
         exec 9>&-
-        exec "$HOME/.local/bin/workspace-stream" workspace "$selector"
+        exec "$HOME/.local/bin/workspace-stream" workspace "$n"
     fi
-    n="$(resolve "$selector")" || exit 0
-    show "$n"
     ;;
 move)
-    selector="${2:?missing workspace selector}"
-    silent=""
-    [[ "${3:-}" == "--silent" ]] && silent=", follow = false"
-    if [[ -z "$current" ]]; then
-        dispatch "hl.dsp.window.move({ workspace = \"$selector\"$silent })"
-        exit 0
+    n="$(resolve "${2:?missing workspace selector}")" || exit 0
+    follow=""
+    [[ "${3:-}" == "--silent" ]] && follow=", follow = false"
+    if [[ -n "$current" ]]; then
+        [[ "$n" == "$current" ]] && exit 0
+        if [[ -z "$follow" ]]; then
+            slide_normal
+            remember last "$n"
+        fi
+        n=$((base + n))
     fi
-    n="$(resolve "$selector")" || exit 0
-    [[ "$n" == "$current" ]] && exit 0
-    if [[ -z "$silent" ]]; then
-        # Following the window shows its workspace here, which is now the last one.
-        slide_sideways "$current" "$n"
-        remember "$focused" "$n"
-    fi
-    dispatch "hl.dsp.window.move({ workspace = \"special:$n\"$silent })"
+    dispatch "hl.dsp.window.move({ workspace = \"$n\"$follow })"
     ;;
 *)
     die "usage: scratch-world [--monitor NAME] toggle | send | focus SELECTOR | move SELECTOR [--silent]"

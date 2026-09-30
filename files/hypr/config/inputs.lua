@@ -19,6 +19,9 @@ hl.config({
     -- },
 })
 
+-- Swipes step to the next workspace number (r+1), not the next workspace on
+-- the screen (m+1), which could be a hidden scratchpad world one (scratch-world).
+hl.config({ gestures = { workspace_swipe_use_r = true } })
 hl.gesture({ fingers = 4, direction = "horizontal", action = "workspace" })
 hl.gesture({ fingers = 3, direction = "down",       action = "close" })
 hl.gesture({ fingers = 3, direction = "up",         action = "fullscreen" })

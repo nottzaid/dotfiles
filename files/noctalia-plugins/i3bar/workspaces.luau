@@ -3,8 +3,8 @@
 -- a 1px border, i3's blue for the focused workspace, soft Catppuccin tones for
 -- the rest, one per workspace on this bar's monitor. Clicking or scrolling
 -- goes through ~/.local/bin/scratch-world, like the keybinds. While this
--- monitor's scratchpad world (Super+S) covers it, the buttons are that
--- world's workspaces instead; a last button enters or leaves it.
+-- monitor shows its scratchpad world (Super+S), the buttons are that world's
+-- workspaces instead; a last button enters or leaves it.
 
 local COLORS = {
   focused = { border = "#4c7899", bg = "#285577", hover = "#3e6685", fg = "#ffffff", weight = "bold" },
@@ -14,12 +14,17 @@ local COLORS = {
   urgent = { border = "#f38ba8", bg = "#f38ba8", hover = "#f59cb5", fg = "#1e1e2e", weight = "bold" },
   scratchpad = { border = "#fab387", bg = "#fab387", hover = "#fbbb93", fg = "#1e1e2e", weight = "bold" }, -- world shown here
 }
-local SCRATCH = "^special:(%d+)$" -- scratchpad world workspace N (scratch-world)
+-- Workspaces above this id are scratchpad world ones, in blocks of a hundred
+-- per monitor: 101-110 are one monitor's 1-10. scratch-world records which
+-- block is whose; a block stays its monitor's even when Hyprland moves its
+-- workspaces elsewhere (say, while that monitor is unplugged).
+local HIDDEN, SIZE = 100, 10
+local BASES = "~/.local/state/scratch-world/bases"
 -- Buttons span the full bar height; keep in sync with [bar.default] thickness.
 local BAR_THICKNESS = 36
 local WORLD = noctalia.expandPath("~/.local/bin/scratch-world")
 
-local workspaces, monitors, urgent = {}, {}, {}
+local workspaces, monitors, urgent, baseOf = {}, {}, {}, {}
 local hoveredWorkspace = nil
 
 local function hyprctlJson(what, onValue)
@@ -74,45 +79,31 @@ end
 
 local function render()
   local output = barOutput()
-  local focusedMonitor, visibleOn, scratchOn = nil, {}, {}
+  local focusedMonitor, visibleOn, activeHere = nil, {}, nil
   for _, m in ipairs(monitors) do
     visibleOn[m.activeWorkspace.id] = m.name
     if m.focused then
       focusedMonitor = m.name
     end
-    local n = m.specialWorkspace and tonumber(string.match(m.specialWorkspace.name, SCRATCH))
-    if n then
-      scratchOn[m.name] = n
+    if m.name == (output or focusedMonitor) then
+      activeHere = m.activeWorkspace.id
     end
   end
-  -- Inside the scratchpad world the buttons are its workspaces: the one
-  -- covering this monitor is on screen, and no normal workspace is.
-  local here = scratchOn[output or focusedMonitor]
-  if here then
-    visibleOn = { [here] = output or focusedMonitor }
-  end
-
-  -- Scratchpad workspace N belongs to the monitor with normal workspace N.
-  local ownerOf = {}
-  for _, ws in ipairs(workspaces) do
-    if ws.id > 0 then
-      ownerOf[ws.id] = ws.monitor
-    end
-  end
+  -- In its scratchpad world, a monitor's buttons are that world's workspaces.
+  local here = activeHere ~= nil and activeHere > HIDDEN
+  local base = baseOf[output or focusedMonitor] or (here and activeHere - activeHere % HIDDEN) or nil
 
   local shown, scratchWindows = {}, 0
   for _, ws in ipairs(workspaces) do
-    local n = tonumber(string.match(ws.name, SCRATCH))
-    local owner = n and ownerOf[n] or ws.monitor
-    local ours = output == nil or owner == output or (here ~= nil and n == here)
-    if n and ours then
+    local mine = base ~= nil and ws.id > base and ws.id <= base + SIZE
+    if mine then
       scratchWindows = scratchWindows + ws.windows
     end
-    local id = if here then n elseif ws.id > 0 then ws.id else nil
     -- Like i3: a workspace shows while it has windows or is on screen.
-    local exists = id ~= nil and (ws.windows > 0 or visibleOn[id] ~= nil)
-    if exists and ours then
-      table.insert(shown, { id = id, name = here and tostring(n) or ws.name, windows = ws.windows })
+    local exists = ws.windows > 0 or visibleOn[ws.id] ~= nil
+    local normal = ws.id > 0 and ws.id <= HIDDEN and (output == nil or ws.monitor == output)
+    if exists and (if here then mine else normal) then
+      table.insert(shown, ws)
     end
   end
   table.sort(shown, function(a, b)
@@ -122,13 +113,14 @@ local function render()
   local buttons = {}
   for _, ws in ipairs(shown) do
     local state = ws.windows > 0 and "occupied" or "empty"
-    if urgent[ws.id] and not here then
+    if urgent[ws.id] then
       state = "urgent"
     elseif visibleOn[ws.id] then
       state = visibleOn[ws.id] == focusedMonitor and "focused" or "active"
     end
-    local id = tostring(ws.id)
-    table.insert(buttons, button(id, ws.name ~= "" and ws.name or id, COLORS[state], function()
+    -- A scratchpad world workspace is its number within the world.
+    local id = tostring(if here then ws.id % HIDDEN else ws.id)
+    table.insert(buttons, button(id, (here or ws.name == "") and id or ws.name, COLORS[state], function()
       switchTo(id)
     end))
   end
@@ -156,6 +148,13 @@ function onWorkspaceHover(state, id)
 end
 
 local function refresh()
+  noctalia.readFileAsync(BASES, function(data)
+    baseOf = {}
+    for name, base in string.gmatch(data or "", "(%S+)%s+(%d+)") do
+      baseOf[name] = tonumber(base)
+    end
+    render()
+  end)
   hyprctlJson("workspaces", function(value)
     workspaces = value
     render()
@@ -180,7 +179,7 @@ local function onEvent(line)
       end
       refresh()
     end)
-  elseif event and (event:find("workspace") or event:find("mon") or event:find("window") or event:find("special")) then
+  elseif event and (event:find("workspace") or event:find("mon") or event:find("window")) then
     refresh()
   end
 end
