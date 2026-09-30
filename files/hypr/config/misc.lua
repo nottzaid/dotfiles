@@ -13,6 +13,9 @@ hl.config({
         force_default_wallpaper = 0,
         background_color = "0x000000",
         middle_click_paste = false,
+        -- Focusing another window on a fullscreen/maximized workspace (Super+Tab,
+        -- HJKL) hands it the same mode instead of dropping it (1 = take_over).
+        on_focus_under_fullscreen = 1,
         enable_swallow = true,
         swallow_regex = "(kitty|ghostty|[Kk]onsole|Alacritty|gnome-terminal|xfce[0-9]?-terminal)",
         vrr = 3,
