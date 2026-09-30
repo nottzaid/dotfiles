@@ -58,6 +58,11 @@ links break it.
 
 - **Displays:** set `MODE` in `files/hypr/config/monitors.lua` (`mirror` or
   `extended`), then `hyprctl reload`.
+- **Scratchpad world:** Super+S shows a second set of numbered workspaces
+  over the normal ones (Hyprland special workspaces `special:1`...), one world
+  per screen with the same numbers as its normal workspaces; the same
+  workspace keys and the bar work inside it, and Super+Shift+S sends a window
+  to the other world. `scratch-world` routes every workspace key.
 - **Launcher:** `launcher-curate` hides entries that cannot open a window
   (terminal programs, missing programs/libraries/files) and applies the rules
   in `files/launcher-curate.rules`; it re-runs whenever applications change.
@@ -75,6 +80,7 @@ links break it.
 ./tests/bash-startup.sh
 ./tests/hypr-reload.sh
 ./tests/launcher-curate.sh
+./tests/scratch-world.sh
 ./tests/emacs-state.sh
 ```
 
