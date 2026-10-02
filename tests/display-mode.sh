@@ -40,9 +40,14 @@ fi
 # A fake hyprctl serving the canned monitors, a fake reload that applies the
 # recorded mode to them (or misbehaves on request), and a fake notify-send.
 mkdir -p "$TMP/bin" "$TMP/run"
+# Like the real one, a plain "monitors" leaves out a monitor that mirrors
+# another; only "monitors all" lists it.
 cat >"$TMP/bin/hyprctl" <<'EOF'
 #!/usr/bin/env bash
-[[ "$1 $2" == "-j monitors" ]] && cat "$FAKE/monitors.json"
+case "$*" in
+"-j monitors all") cat "$FAKE/monitors.json" ;;
+"-j monitors") jq 'map(select(.mirrorOf == "none"))' "$FAKE/monitors.json" ;;
+esac
 exit 0
 EOF
 cat >"$TMP/bin/notify-send" <<'EOF'
