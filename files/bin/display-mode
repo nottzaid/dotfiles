@@ -27,9 +27,10 @@ notify() {
 }
 
 # The layout in effect, from the compositor: a monitor that mirrors another
-# reports its source in mirrorOf.
+# reports its source in mirrorOf. Only "monitors all" lists it; plain
+# "monitors" leaves a mirroring monitor out, which hides mirror mode entirely.
 current() {
-    hyprctl -j monitors |
+    hyprctl -j monitors all |
         jq -r 'if any(.[]; (.mirrorOf // "none") != "none") then "mirror" else "extended" end'
 }
 
