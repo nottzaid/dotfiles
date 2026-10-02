@@ -65,6 +65,9 @@ links break it.
   vertically; the same workspace keys and the bar work inside it, and
   Super+Shift+S sends a window to the other world. `scratch-world` routes
   every workspace key.
+- **Emacs:** runs as a daemon from login (`modules/editors.nix` enables the
+  pacman unit), so Super+E opens a frame at once instead of cold-starting
+  Emacs. `systemctl --user restart emacs` reloads `init.el`.
 - **Launcher:** `launcher-curate` hides entries that cannot open a window
   (terminal programs, missing programs/libraries/files) and applies the rules
   in `files/launcher-curate.rules`; it re-runs whenever applications change.

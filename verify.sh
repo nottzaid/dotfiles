@@ -61,6 +61,14 @@ if [[ "${DOTFILES_SKIP_HM:-0}" != 1 ]]; then
             pass "all $managed Home Manager files deployed"
         fi
     fi
+
+    # Super+E (emacsclient -c) opens a frame at once only with the Emacs
+    # daemon enabled (modules/editors.nix); without it, it cold-starts Emacs.
+    if systemctl --user is-enabled emacs.service >/dev/null 2>&1; then
+        pass "Emacs daemon enabled"
+    else
+        fail "Emacs daemon is not enabled (systemctl --user is-enabled emacs.service)"
+    fi
 fi
 
 # Ownership: shells, man, and Python come from pacman, never from a Nix or
