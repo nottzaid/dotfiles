@@ -5,6 +5,9 @@ set -Eeuo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-hypr-reload.XXXXXX")"
 trap 'rm -rf -- "$TMP"' EXIT
+# host.lua reads the mode display-mode recorded this login; the mode loop below
+# must test the MODE line, not whatever Super+Shift+M last set.
+export DISPLAY_MODE_FILE="$TMP/no-recorded-mode"
 
 config="$ROOT/files/hypr/hyprland.lua"
 monitors="$ROOT/files/hosts/desktop/hypr/config/host.lua"

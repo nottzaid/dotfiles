@@ -27,4 +27,8 @@
     source = ../files/bin/hypr-display-reload;
     executable = true;
   };
+  home.file.".local/bin/display-mode" = {
+    source = ../files/bin/display-mode;
+    executable = true;
+  };
 }
