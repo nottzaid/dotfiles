@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Switch the desktop between its two display layouts: "mirror" (the TV shows
+# the monitor) and "extended" (two screens, workspaces 1-5 and 6-10). Bound to
+# Super+Shift+M in files/hosts/desktop/hypr/config/host.lua.
+#
+#   display-mode [toggle]       switch to the other layout
+#   display-mode mirror|extended
+#   display-mode status         print the layout in effect
+#
+# The layouts live in host.lua, a read-only store file, so this records the
+# wanted mode in $XDG_RUNTIME_DIR/display-mode and runs hypr-display-reload,
+# whose reload makes host.lua read it back. The file goes away at logout: a new
+# session starts in host.lua's own default.
+set -Eeuo pipefail
+
+FILE="${DISPLAY_MODE_FILE:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/display-mode}"
+RELOAD="${DISPLAY_MODE_RELOAD:-$HOME/.local/bin/hypr-display-reload}"
+TRIES="${DISPLAY_MODE_TRIES:-30}" # 0.1 s each, for the layout to show up
+
+die() {
+    printf 'display-mode: %s\n' "$*" >&2
+    exit 1
+}
+
+notify() {
+    notify-send -a display-mode "Display mode" "$1" 2>/dev/null || true
+}
+
+# The layout in effect, from the compositor: a monitor that mirrors another
+# reports its source in mirrorOf.
+current() {
+    hyprctl -j monitors |
+        jq -r 'if any(.[]; (.mirrorOf // "none") != "none") then "mirror" else "extended" end'
+}
+
+action="${1:-toggle}"
+case "$action" in
+status)
+    current
+    exit 0
+    ;;
+toggle | mirror | extended) ;;
+*) die "usage: display-mode [toggle | mirror | extended | status]" ;;
+esac
+
+# One switch at a time: a second press while the first one reloads does nothing.
+mkdir -p "${FILE%/*}"
+exec 9>"$FILE.lock"
+flock -n 9 || exit 0
+
+now="$(current)"
+want="$action"
+if [[ "$action" == toggle ]]; then
+    want=mirror
+    [[ "$now" == mirror ]] && want=extended
+fi
+[[ "$want" != "$now" ]] || exit 0
+
+printf '%s\n' "$want" >"$FILE"
+if ! "$RELOAD"; then
+    printf '%s\n' "$now" >"$FILE"
+    notify "Could not switch to $want"
+    die "$RELOAD failed"
+fi
+
+for ((i = 0; i < TRIES; i++)); do
+    if [[ "$(current)" == "$want" ]]; then
+        notify "${want^}"
+        exit 0
+    fi
+    sleep 0.1
+done
+printf '%s\n' "$now" >"$FILE"
+notify "Still $now: the layout did not change"
+die "the layout is still $now after reloading; does this host's host.lua read $FILE?"

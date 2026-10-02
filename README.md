@@ -56,8 +56,10 @@ stages every per-file source as its own isolated store object, and Hyprland
 resolves Lua `require()` next to the canonicalized entry file, so per-file
 links break it.
 
-- **Displays:** set `MODE` in `files/hypr/config/monitors.lua` (`mirror` or
-  `extended`), then `hyprctl reload`.
+- **Displays:** Super+Shift+M switches the desktop between mirror and
+  extended (`display-mode`) until logout; every login starts in the `MODE` set
+  in `files/hosts/desktop/hypr/config/host.lua`. After changing that default,
+  run `hypr-display-reload`, not a plain `hyprctl reload`.
 - **Scratchpad world:** Super+S switches a screen to its own hidden
   workspaces 1-10 (ids 101-110 on one screen, 201-210 on the next), sliding
   vertically; the same workspace keys and the bar work inside it, and
@@ -79,6 +81,7 @@ links break it.
 ./tests/install-smoke.sh
 ./tests/bash-startup.sh
 ./tests/hypr-reload.sh
+./tests/display-mode.sh
 ./tests/launcher-curate.sh
 ./tests/scratch-world.sh
 ./tests/emacs-state.sh

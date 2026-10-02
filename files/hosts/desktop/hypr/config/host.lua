@@ -1,13 +1,30 @@
 -- Desktop: two HDMI screens (a 24" monitor and a 4K TV).
 --
--- Display layout. Set MODE, then run `hypr-display-reload` (a plain
--- `hyprctl reload` leaves HDMI-A-2 without a Wayland output when switching
--- from mirror to extended: no bar, wallpaper, or launcher on it).
+-- Display layout. MODE is what every login starts in; Super+Shift+M switches
+-- between the two until logout (display-mode). To change the default, set MODE
+-- and run `hypr-display-reload` (a plain `hyprctl reload` leaves HDMI-A-2
+-- without a Wayland output when switching from mirror to extended: no bar,
+-- wallpaper, or launcher on it).
 --
 --   "mirror"    the big HDMI-A-2 mirrors the small HDMI-A-1.
 --   "extended"  two independent screens: the big one (4K, right of the small
 --               one) gets exclusive workspaces 6-10, the small one keeps 1-5.
 local MODE = "extended"
+
+-- display-mode records the mode it switched to in the runtime directory and
+-- reloads; the reload reads it back here. No file means MODE above applies.
+local function recorded_mode()
+    local path = os.getenv("DISPLAY_MODE_FILE")
+        or ((os.getenv("XDG_RUNTIME_DIR") or "") .. "/display-mode")
+    local file = io.open(path)
+    if not file then return nil end
+    local mode = file:read("*l")
+    file:close()
+    if mode == "mirror" or mode == "extended" then return mode end
+end
+MODE = recorded_mode() or MODE
+
+hl.bind("SUPER + SHIFT + M", hl.dsp.exec_cmd("~/.local/bin/display-mode toggle"))
 
 hl.monitor({
     output   = "HDMI-A-1",
