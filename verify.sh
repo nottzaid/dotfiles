@@ -102,6 +102,7 @@ if command -v Hyprland >/dev/null 2>&1; then
         host="$(basename "$host_dir")"
         tree="$(mktemp -d)"
         cp -r "$ROOT/files/hypr/." "$tree/"
+        cp "$ROOT/components/yt-stream-workspace/hyprland/yt-stream-workspace.lua" "$tree/"
         cp -r "$host_dir/hypr/." "$tree/"
         if Hyprland --verify-config --config "$tree/hyprland.lua" 2>&1 | grep -q 'config ok'; then
             pass "Hyprland tracked config ($host)"
