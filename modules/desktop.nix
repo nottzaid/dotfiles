@@ -19,9 +19,12 @@ let
   cfg = config.dotfiles;
   hostDir = ../files/hosts + "/${cfg.host}";
 
+  # The stream module comes from the submodule, so it always matches the
+  # workspace-stream script that tools.nix deploys from the same checkout.
   hyprTree = pkgs.runCommand "hypr-config-${cfg.host}" { } ''
     cp -r ${../files/hypr} $out
     chmod -R u+w $out
+    cp ${../components/yt-stream-workspace/hyprland/yt-stream-workspace.lua} $out/yt-stream-workspace.lua
     cp -r ${hostDir + "/hypr"}/. $out/
   '';
 

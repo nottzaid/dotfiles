@@ -23,6 +23,7 @@ if command -v Hyprland >/dev/null 2>&1; then
         local tree="$TMP/hypr" file="$TMP/mode-for-host"
         rm -rf "$tree" "$file"
         cp -r "$ROOT/files/hypr" "$tree"
+        cp "$ROOT/components/yt-stream-workspace/hyprland/yt-stream-workspace.lua" "$tree/"
         cp -r "$ROOT/files/hosts/desktop/hypr/." "$tree/"
         sed -i "s/^local MODE = .*/local MODE = \"$1\"/" "$tree/config/host.lua"
         printf 'assert(MODE == "%s", "MODE is " .. MODE)\n' "$3" >>"$tree/config/host.lua"

@@ -17,6 +17,7 @@ rules="$ROOT/files/hypr/config/windowrules.lua"
 assemble() {
     rm -rf "$TMP/hypr"
     cp -r "$ROOT/files/hypr" "$TMP/hypr"
+    cp "$ROOT/components/yt-stream-workspace/hyprland/yt-stream-workspace.lua" "$TMP/hypr/"
     cp -r "$ROOT/files/hosts/$1/hypr/." "$TMP/hypr/"
 }
 verify_tree() {
