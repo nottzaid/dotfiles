@@ -67,10 +67,14 @@
 (global-display-line-numbers-mode)
 (set-face-attribute 'default nil :height 170)
 
-;; Ensure Emacs subprocesses can find Rust tools installed by rustup.
-(let ((cargo-bin (expand-file-name "~/.cargo/bin")))
-  (add-to-list 'exec-path cargo-bin)
-  (setenv "PATH" (concat cargo-bin path-separator (getenv "PATH"))))
+;; The daemon starts with a short PATH. Let Emacs and its subprocesses find
+;; tools installed per user: Rust tools from rustup, and the coding agents that
+;; aside drives (OpenCode, Cline, and the Claude Code and Codex ACP adapters).
+(dolist (dir '("~/.cargo/bin" "~/.local/bin" "~/.opencode/bin"
+               "~/.local/share/pnpm/bin"))
+  (let ((dir (expand-file-name dir)))
+    (add-to-list 'exec-path dir)
+    (setenv "PATH" (concat dir path-separator (getenv "PATH")))))
 
 ;; IDO mode
 (ido-mode 1)
@@ -328,6 +332,14 @@
 ;; Magit
 (use-package magit
   :ensure t)
+
+;; aside: a popup for coding agents (OpenCode, Claude Code, Codex, Cline).
+;; Update with M-x package-vc-upgrade RET aside.
+(use-package aside
+  :vc (:url "https://github.com/nottzaid/aside")
+  :bind (("C-c o" . aside)
+         ("C-c h" . aside-toggle)
+         ("C-c r" . aside-resume)))
 
 ;; ============================================================================
 ;; ASSEMBLY LANGUAGE MODES
