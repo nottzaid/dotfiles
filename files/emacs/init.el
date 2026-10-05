@@ -336,7 +336,7 @@
 ;; aside: a popup for coding agents (OpenCode, Claude Code, Codex, Cline).
 ;; Update with M-x package-vc-upgrade RET aside.
 (use-package aside
-  :vc (:url "https://github.com/nottzaid/aside")
+  :vc (:url "https://github.com/nottzaid/aside" :rev :newest)
   :bind (("C-c o" . aside)
          ("C-c h" . aside-toggle)
          ("C-c r" . aside-resume)))
