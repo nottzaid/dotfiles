@@ -99,6 +99,9 @@ local floatApps = {
 }
 for _, m in ipairs(floatApps) do hl.window_rule({ match = m, float = true }) end
 
+-- aside popups: small Emacs frames for coding agents, titled "aside · PROJECT"
+hl.window_rule({ match = { class = "^([Ee]macs)$", title = "^aside · " }, float = true, center = true })
+
 -- Float Common Modals
 local modalMatches = {
     { title = "^(Open|Authentication Required|Add Folder to Workspace|Choose Files|Save As|Confirm to replace files|File Operation Progress)$" },
