@@ -162,3 +162,50 @@ hl.bind(mainMod .. " + CONTROL + mouse_down", hl.dsp.exec_cmd(worldCall .. "focu
 -- leaves it; Super+Shift+S sends the window to the other world.
 hl.bind(mainMod .. " + SHIFT + S", hl.dsp.exec_cmd(worldCall .. "send"))
 hl.bind(mainMod .. " + S",         hl.dsp.exec_cmd(worldCall .. "toggle"))
+
+-- Gaming workspace: the named one the game window rules fill. It has no
+-- number, so the workspace keys and the bar never reach it. Super+G goes there
+-- and, pressed again, back to the workspace it left (Hyprland's previous one
+-- when you arrived another way, such as a game opening); Super+Shift+G sends
+-- the focused window there, or back, without following it.
+local gamingWorkspace = "name:gaming"
+local gamingHome = nil -- selector of the workspace Super+G left
+
+-- The workspace the focused screen shows.
+local function shownWorkspace()
+    local monitor = hl.get_active_monitor()
+    return monitor and monitor.active_workspace
+end
+
+-- Numbered workspaces by id; named ones have negative ids, so by name.
+local function selectorOf(ws)
+    return ws.id > 0 and tostring(ws.id) or ("name:" .. ws.name)
+end
+
+-- Focus goes through the stream module when it is loaded, like the workspace keys.
+local function focusWorkspace(selector)
+    if YTWS then
+        YTWS.workspace(selector)
+    else
+        hl.dispatch(hl.dsp.focus({ workspace = selector }))
+    end
+end
+
+hl.bind(mainMod .. " + G", function()
+    local shown = shownWorkspace()
+    if shown and shown.name == "gaming" then
+        focusWorkspace(gamingHome or "previous")
+    else
+        gamingHome = shown and selectorOf(shown) or nil
+        focusWorkspace(gamingWorkspace)
+    end
+end)
+
+hl.bind(mainMod .. " + SHIFT + G", function()
+    local shown = shownWorkspace()
+    local target = gamingWorkspace
+    if shown and shown.name == "gaming" then
+        target = gamingHome or "previous"
+    end
+    hl.dispatch(hl.dsp.window.move({ workspace = target, follow = false }))
+end)
