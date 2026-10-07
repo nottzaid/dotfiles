@@ -65,6 +65,11 @@ links break it.
   vertically; the same workspace keys and the bar work inside it, and
   Super+Shift+S sends a window to the other world. `scratch-world` routes
   every workspace key.
+- **Gaming workspace:** the window rules send games (Steam/Proton, gamescope,
+  anything tagged as a game) to the named `gaming` workspace. It has no
+  number, so the workspace keys and the bar skip it: Super+G goes there and,
+  pressed again, back to where you were; Super+Shift+G sends the focused
+  window there, or back.
 - **Emacs:** runs as a daemon from login (`modules/editors.nix` enables the
   pacman unit), so Super+E opens a frame at once instead of cold-starting
   Emacs. `systemctl --user restart emacs` reloads `init.el`.
