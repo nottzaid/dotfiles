@@ -15,7 +15,7 @@ so the branch name and this notice are the branch-level archive marker.
 | --- | --- |
 | pacman (+ AUR via paru) | Kernel, drivers, GPU stack, desktop, shells, and every tool it packages (`packages/*.txt`) |
 | Home Manager (this flake) | All dotfiles, plus the few CLI tools pacman lacks (`modules/tools.nix`) |
-| `system/apply.sh` | Root-level configuration: DNS, PAM keyring unlock, GRUB command line, services |
+| `system/apply.sh` | Root-level configuration: DNS, PAM keyring unlock, GRUB command line, services, the ZhiXu gamepad fix (`components/linux-zhixu-controller-fix`) |
 
 `home.packages` stays minimal on purpose: binaries, GPU, and drivers belong
 to pacman, and `verify.sh` fails if a Nix copy of bash, fish, man, or Python

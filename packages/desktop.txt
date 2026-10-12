@@ -24,6 +24,7 @@ pavucontrol
 pnpm
 power-profiles-daemon
 python
+python-evdev
 python-gobject
 ripgrep
 rsync

@@ -1,3 +1,6 @@
 [submodule "components/yt-stream-workspace"]
 	path = components/yt-stream-workspace
 	url = https://github.com/nottzaid/yt-stream-workspace.git
+[submodule "components/linux-zhixu-controller-fix"]
+	path = components/linux-zhixu-controller-fix
+	url = https://github.com/nottzaid/linux-zhixu-controller-fix.git
