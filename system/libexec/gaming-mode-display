@@ -1,0 +1,17 @@
+#!/bin/sh
+# gaming-mode-display off|detect CONNECTOR (e.g. card1-HDMI-A-2): disconnect a
+# display connector for gaming mode, or hand it back to hotplug detection.
+# Hyprland drops a merely disabled monitor's buffers only when the connector
+# goes away (about 190 MiB of VRAM for a 4K screen). Runs as root through
+# /etc/sudoers.d/gaming-mode, so it accepts nothing but these two words and a
+# DRM connector name.
+set -eu
+case "${1:-}" in off | detect) ;; *) echo "usage: gaming-mode-display off|detect CONNECTOR" >&2; exit 2 ;; esac
+case "${2:-}" in
+    card[0-9]*-*) ;;
+    *) echo "gaming-mode-display: not a connector: ${2:-}" >&2; exit 2 ;;
+esac
+case "$2" in */* | *..*) exit 2 ;; esac
+status="/sys/class/drm/$2/status"
+[ -e "$status" ] || { echo "gaming-mode-display: no connector $2" >&2; exit 1; }
+echo "$1" >"$status"

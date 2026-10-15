@@ -1,0 +1,914 @@
+#!/usr/bin/env bash
+# Gaming mode: while a game is on screen, nothing but the game and what it
+# needs uses the CPU, GPU, VRAM or RAM; leaving the gaming workspace puts
+# everything back. files/hypr/config/gaming.lua calls `gaming-mode sync` on
+# every change to the gaming workspace (shown or not, which windows), and
+# sync works out under a lock what should be, so events may arrive in any
+# order: on while the gaming workspace is on screen with a window on it.
+#
+# Nothing is named here; everything is found each time:
+#   the game       the processes behind the gaming workspace's windows, every
+#                  process that started them (a launcher or terminal reading
+#                  the game's output would stop the game once the pipe fills)
+#                  every process they started, and what those talk to over
+#                  a unix socket (a wineserver another app started, say).
+#                  Never touched, nor the compositor, nor this script and its
+#                  callers.
+#   services       a process owning a name under org.freedesktop.* on the
+#                  session bus, any well-known name while it has no window, or
+#                  a unit D-Bus started (dbus-*): a game may call them, and a
+#                  call to a frozen one hangs. Kept running.
+#   the shell      whatever owns layer surfaces (bar, wallpaper, dock,
+#                  notifications, launcher): stopped, and started again after
+#                  through its systemd unit, or with its exact command line,
+#                  directory and environment, as the compositor started it.
+#                  A layer rule first stops Hyprland from snapshotting each
+#                  closing layer for a fade-out (a screen-sized framebuffer
+#                  each, 74 MiB for a bar and wallpaper on two screens).
+#   terminals      a terminal window whose one child on a terminal is a client
+#                  of a session server (herdr, tmux, zellij, screen) running
+#                  detached from it: closed (its VRAM is freed), and
+#                  reopened attached to the same session on its own workspace,
+#                  silently. (Its other children are its own helpers.)
+#   other screens  disconnected through /usr/local/libexec/gaming-mode-display
+#                  (system/) when sudo lets this user run it without a
+#                  password: only a gone connector makes Hyprland free its
+#                  buffers (~190 MiB for a 4K screen). Reconnected after. Never
+#                  the screen showing the game, nor one whose speakers play
+#                  the game's sound or the default sink.
+#   apps           every other unit in the user's app.slice: frozen (cgroup
+#                  freezer: no CPU, no redraws) and their memory pushed out to
+#                  swap. Their VRAM stays theirs; closing is the only way back.
+# If finding the game, its sockets or the services fails, nothing changes.
+#
+#   gaming-mode sync      follow the gaming workspace (what gaming.lua runs)
+#   gaming-mode on|off    force it, e.g. for a game kept off screen; sync
+#                         leaves a forced on alone until off
+#   gaming-mode pause     keep the desktop while a game is on screen (to chat
+#                         or stream beside it) until `gaming-mode resume`
+#   gaming-mode status    what is stopped, closed, disconnected, frozen
+#   gaming-mode report    what still uses CPU or VRAM
+#
+# Every change is recorded before it is made, and every step of leaving runs
+# even if another fails and keeps its record until it succeeds; a failed
+# leave is retried for a minute. Hyprland's not-responding dialog is off
+# meanwhile (it would start a process per frozen window).
+set -uo pipefail
+
+STATE_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/gaming-mode"
+USER_CG="/user.slice/user-$(id -u).slice/user@$(id -u).service"
+APPS="/sys/fs/cgroup$USER_CG/app.slice"
+DISPLAY_HELPER=/usr/local/libexec/gaming-mode-display
+SYS=/sys # sysfs (tests point it elsewhere)
+GAMING_WS=gaming
+SELF=$(readlink -f "$0")
+
+ON=$STATE_DIR/on               # present while on
+PINNED=$STATE_DIR/pinned       # forced on: sync does not leave
+PAUSED=$STATE_DIR/paused       # paused: sync keeps the desktop as it is
+EMPTY=$STATE_DIR/empty         # when the shown-but-empty gaming workspace may be left
+RETRIES=$STATE_DIR/retries     # failed leaves in a row
+CLAIMED=$STATE_DIR/claimed     # processes a restore has already counted as its own
+ANR=$STATE_DIR/anr             # the not-responding dialog setting before
+NOANIM=$STATE_DIR/noanim       # the no-fade layer rule is set
+SHELLS=$STATE_DIR/shell        # one directory per stopped shell process
+TERMS=$STATE_DIR/terms         # one directory per closed terminal
+DISPLAYS=$STATE_DIR/displays   # disconnected connectors, one per line
+FROZEN=$STATE_DIR/frozen       # cgroups this script froze, one per line
+LOG=$STATE_DIR/log
+
+log() { printf '%s %s\n' "$(date +%T.%3N)" "$*" >>"$LOG"; }
+cgroup_of() { sed -n 's/^0:://p' "/proc/$1/cgroup" 2>/dev/null; }
+parent_of() { awk '/^PPid:/ {print $2}' "/proc/$1/status" 2>/dev/null; }
+sid_of() { ps -o sid= -p "$1" 2>/dev/null | tr -d ' '; }
+tty_of() { ps -o tty= -p "$1" 2>/dev/null | tr -d ' '; }
+has() { grep -qxF -- "$2" <<<"$1"; } # has LINES LINE
+
+# A process's start time (clock ticks since boot): with the pid, it names one
+# process for good, where a pid alone may be reused.
+starttime_of() {
+    local s
+    local -a f
+    { read -r s <"/proc/$1/stat"; } 2>/dev/null || return 1
+    read -r -a f <<<"${s##*) }"
+    echo "${f[19]}"
+}
+# same_process PID START: that very process, still running (a zombie has
+# ended though it keeps its pid and start time).
+same_process() {
+    local s
+    local -a f
+    { read -r s <"/proc/$1/stat"; } 2>/dev/null || return 1
+    read -r -a f <<<"${s##*) }"
+    [[ -n $2 && ${f[19]} == "$2" && ${f[0]} != Z ]]
+}
+
+# The time since boot, in seconds or in the clock ticks process start times
+# use: a clock that never goes back.
+CLK=$(getconf CLK_TCK)
+uptime_s() { local up; read -r up _ </proc/uptime; echo "${up%.*}"; }
+uptime_ticks() {
+    local up
+    read -r up _ </proc/uptime
+    echo $((${up%.*} * CLK + 10#${up#*.} * CLK / 100))
+}
+
+# Replace a record with CONTENT (removing it when empty) by an atomic rename,
+# so an interruption leaves the old record whole.
+write_lines() {
+    if [[ -z $2 ]]; then
+        rm -f "$1"
+    else
+        printf '%s' "$2" >"$1.new" && mv -f "$1.new" "$1"
+    fi
+}
+
+# covers CGROUP LIST: the cgroup is one of LIST, or above one (freezing is
+# recursive, so freezing it would freeze that one too).
+covers() {
+    local e
+    while IFS= read -r e; do
+        [[ -n $e && ($e == "$1" || $e == "$1/"*) ]] && return 0
+    done <<<"$2"
+    return 1
+}
+
+drop_line() { # drop_line FILE LINE
+    local rest status
+    [[ -e $1 ]] || return 0
+    rest=$(grep -vxF -- "$2" "$1") && status=0 || status=$?
+    ((status <= 1)) || return 1 # unreadable: keep the record whole
+    write_lines "$1" "${rest:+$rest$'\n'}"
+}
+
+# Run this script's sync again in N seconds, detached and without the lock.
+sync_later() { (sleep "$1" && exec "$SELF" sync) 9>&- >/dev/null 2>&1 & }
+
+# --- what is on screen ----------------------------------------------------
+
+# 0 when the gaming workspace is shown with a window on it, 1 when not shown,
+# 2 when Hyprland can't be asked, 3 when it is shown but empty.
+gaming_shown() {
+    local monitors workspaces
+    monitors=$(hyprctl -j monitors) || return 2
+    workspaces=$(hyprctl -j workspaces) || return 2
+    jq -e --arg ws "$GAMING_WS" 'any(.[]; .activeWorkspace.name == $ws)' <<<"$monitors" >/dev/null || return 1
+    jq -e --arg ws "$GAMING_WS" 'any(.[]; .name == $ws and .windows > 0)' <<<"$workspaces" >/dev/null || return 3
+}
+
+# The processes at the other end of any unix socket of the given processes:
+# what the game talks to (Xwayland, the audio server, a wineserver that
+# another app started) must not be frozen under it.
+socket_peers() {
+    ss -xpn | awk -v want=" $* " '
+        NR > 1 {
+            rest = $0
+            while (match(rest, /pid=[0-9]+/)) {
+                p = substr(rest, RSTART + 4, RLENGTH - 4)
+                owners[$6] = owners[$6] " " p
+                if (index(want, " " p " ")) mine[$8] = 1
+                rest = substr(rest, RSTART + RLENGTH)
+            }
+        }
+        END { for (i in mine) if (i in owners) print owners[i] }' | tr ' ' '\n' | sed '/^$/d'
+}
+
+# Sets CLIENTS, GAME_PIDS (the windows' processes), PROTECTED (pids that must
+# keep running), PROTECTED_CG (their cgroups) and SERVICES (see services). Fails
+# if anything can't be read, or a game process is not in the user's apps.
+discover() {
+    local pid up cg tree peers hypr
+    local -a queue
+    CLIENTS=$(hyprctl -j clients) || return 1
+    GAME_PIDS=$(jq -r --arg ws "$GAMING_WS" '.[] | select(.workspace.name == $ws) | .pid | select(. > 0)' <<<"$CLIENTS") ||
+        return 1
+    GAME_PIDS=$(sort -u <<<"$GAME_PIDS")
+    [[ -n $GAME_PIDS ]] || return 1
+    for pid in $GAME_PIDS; do
+        cg=$(cgroup_of "$pid")
+        [[ $cg == "$USER_CG/app.slice/"* ]] || { log "game pid $pid is in '$cg', not an app: unsure"; return 1; }
+    done
+    tree=$(
+        for pid in $GAME_PIDS; do
+            queue=("$pid")
+            while ((${#queue[@]})); do
+                echo "${queue[0]}"
+                mapfile -t -O "${#queue[@]}" queue < <(pgrep -P "${queue[0]}")
+                queue=("${queue[@]:1}")
+            done
+        done
+    )
+    # shellcheck disable=SC2086 # one pid per word
+    peers=$(socket_peers $tree) || { log "sockets unreadable: unsure"; return 1; }
+    hypr=$(pgrep -x Hyprland) || return 1
+    PROTECTED=$(
+        echo "$tree"
+        for pid in $GAME_PIDS $$; do
+            up=$pid
+            while [[ -n $up ]] && ((up > 1)); do echo "$up"; up=$(parent_of "$up"); done
+        done
+        echo "$peers"
+        echo "$hypr"
+    )
+    PROTECTED=$(sed '/^$/d' <<<"$PROTECTED" | sort -u)
+    PROTECTED_CG=$(for pid in $PROTECTED; do cgroup_of "$pid"; done | sort -u)
+    # A service restarting while it is looked up is looked up again.
+    for _ in 1 2 3; do SERVICES=$(services) && return 0; sleep 0.2; done
+    log "session bus services unreadable: unsure"
+    return 1
+}
+
+# The cgroups of D-Bus services (see the top). Fails if the bus can't be read
+# or an owner can't be placed (it ended, and may be restarting elsewhere).
+services() {
+    local names owners pid cg
+    names=$(busctl --user list --json=short) || return 1
+    owners=$(jq -r --argjson clients "$CLIENTS" '
+        [$clients[].pid] as $windowed
+        | .[] | select(.pid != null)
+        | select((.name | startswith("org.freedesktop.")) or
+                 ((.name | startswith(":") | not) and (.pid as $p | $windowed | index($p) | not)))
+        | .pid' <<<"$names") || return 1
+    for pid in $(sort -u <<<"$owners"); do
+        cg=$(cgroup_of "$pid")
+        [[ -n $cg ]] || return 1
+        echo "$cg"
+    done
+    find "$APPS" -mindepth 1 -type d -name 'dbus-*' -printf "$USER_CG/app.slice/%P\n" || return 1
+}
+
+# The screens whose speakers may play the game's sound: for the default sink
+# and every stream of a game process, the route is followed (through virtual
+# and effect sinks, whose two sides share a node.link-group) to the sound
+# cards it ends at; a card on a GPU (the same PCI device as a display
+# connector's card) is a screen's, named by its EDID model as ALSA gives it.
+# One line per such name; nothing without PipeWire.
+audio_screens() {
+    local dump game card name gpus dev
+    command -v pw-dump >/dev/null || return 0
+    dump=$(pw-dump) || return 1
+    game=$(jq -R . <<<"$PROTECTED" | jq -sc .)
+    # The GPUs' PCI devices, function stripped (cardN, not its connectors).
+    gpus=$(for dev in "$SYS"/class/drm/card*/device; do
+        [[ $dev =~ /card[0-9]+/device$ ]] && readlink -f "$dev"
+    done | sed 's/\.[0-7]$//' | sort -u)
+    jq -r --argjson game "$game" '
+        [.[] | select(.type == "PipeWire:Interface:Node")] as $nodes
+        | [.[] | select(.type == "PipeWire:Interface:Link") | {o: .info["output-node-id"], i: .info["input-node-id"]}] as $links
+        | [.[] | select(.type == "PipeWire:Interface:Client"
+                and ((.info.props["application.process.id"] | tostring) as $p | $game | index($p))) | .id] as $clients
+        | [$nodes[] | select((.info.props["client.id"] as $c | $clients | index($c))
+                and ((.info.props["media.class"] // "") | startswith("Stream/Output/Audio"))) | .id] as $streams
+        | [.[] | select(.type == "PipeWire:Interface:Metadata" and .props["metadata.name"] == "default")
+               | .metadata[]? | select(.key == "default.audio.sink") | .value.name] as $default
+        | [$nodes[] | select(.info.props["node.name"] as $n | $default | index($n)) | .id] as $defaults
+        | def next($id):
+            [$links[] | select(.o == $id) | .i]
+            + [$nodes[] | select(.id == $id) | .info.props["node.link-group"] // empty
+               | . as $g | $nodes[] | select(.info.props["node.link-group"] == $g and .id != $id) | .id];
+          def reach($frontier; $seen):
+            if ($frontier | length) == 0 then $seen
+            else ([$frontier[] | next(.)] | add // [] | unique | map(select(. as $x | $seen | index($x) | not))) as $new
+                 | reach($new; $seen + $new) end;
+          reach($streams + $defaults; $streams + $defaults)
+        | .[] as $id | $nodes[] | select(.id == $id) | .info.props
+        | select(."media.class" == "Audio/Sink" and ."device.api" == "alsa" and ."alsa.card" != null)
+        | "\(."alsa.card") \(."alsa.name" // "?")"' <<<"$dump" | sort -u |
+        while read -r card name; do
+            dev=$(readlink -f "$SYS/class/sound/card$card/device" 2>/dev/null) || continue
+            if has "$gpus" "${dev%.[0-7]}"; then echo "$name"; fi
+        done
+}
+
+# --- launching like the compositor does -------------------------------------
+
+save_process() { # save_process PID DIR: command line, environment, directory, cgroup
+    mkdir -p "$2" &&
+        cat "/proc/$1/cmdline" >"$2/cmdline" 2>/dev/null &&
+        cat "/proc/$1/environ" >"$2/environ" 2>/dev/null &&
+        readlink "/proc/$1/cwd" >"$2/cwd" 2>/dev/null &&
+        cgroup_of "$1" >"$2/cgroup"
+}
+
+# A shell command that runs a saved process again exactly (same directory,
+# environment and arguments, plus extra arguments). One that had a scope of
+# its own in the apps (as uwsm or a launcher gives one) gets a new scope in
+# the same slice, named alike with a fresh suffix.
+replay_cmd() {
+    local dir=$1 cmd e a cg unit slice
+    shift
+    local -a env argv
+    mapfile -d '' -t env <"$dir/environ"
+    mapfile -d '' -t argv <"$dir/cmdline"
+    cmd="cd $(printf %q "$(<"$dir/cwd")") && exec"
+    cg=$(<"$dir/cgroup")
+    unit=${cg##*/}
+    slice=${cg%/*}
+    slice=${slice##*/}
+    if [[ $cg == "$USER_CG/app.slice/"* && $unit == *.scope && $slice == *.slice ]]; then
+        unit=${unit%.scope}
+        [[ $unit =~ ^(.+)-[0-9a-f]+$ ]] && unit=${BASH_REMATCH[1]}
+        unit+=-$(printf '%04x%04x' $RANDOM $RANDOM).scope
+        cmd+=" systemd-run --user --scope --quiet --slice=$(printf %q "$slice") --unit=$(printf %q "$unit") --"
+    fi
+    # Hyprland hands each launch fresh tokens (HL_EXEC_RULE_TOKEN and the
+    # like) that it later finds in the window's environment to apply that
+    # launch's rules: those come from this launch, never from the old one.
+    cmd+=" env -i"
+    for e in "${env[@]}"; do [[ $e == HL_* ]] || cmd+=" $(printf %q "$e")"; done
+    # shellcheck disable=SC2016 # expanded by the shell Hyprland starts
+    cmd+=' $(env | grep "^HL_")'
+    for a in "${argv[@]}" "$@"; do cmd+=" $(printf %q "$a")"; done
+    printf '%s' "$cmd"
+}
+
+# Run a shell command through Hyprland, with optional window rules (the body
+# of a Lua table), so it starts where the compositor's own launches do.
+compositor_exec() {
+    local cmd=$1 rules=${2:-} level='==' tail=''
+    while [[ $cmd == *"]$level]"* ]]; do level+='='; done
+    [[ -n $rules ]] && tail=", { $rules }"
+    hyprctl dispatch "hl.dsp.exec_cmd([${level}[$cmd]${level}]$tail)" >/dev/null
+}
+
+# running_like FILE SINCE: a running process whose command line is FILE's,
+# started at or after SINCE (clock ticks since boot), that no other restore
+# has counted as its own. Claims it, its pid in RUNNING_PID.
+running_like() {
+    local p pid s claimed i
+    local -a f want have
+    claimed=$(cat "$CLAIMED" 2>/dev/null)
+    mapfile -d '' -t want <"$1" && ((${#want[@]})) || return 1
+    # Compared in the shell: a command per process would cost a fork for
+    # each of the few hundred, every tenth of a second while waiting.
+    for p in /proc/[0-9]*; do
+        pid=${p#/proc/}
+        { mapfile -d '' -t have <"$p/cmdline"; } 2>/dev/null || continue
+        ((${#have[@]} == ${#want[@]})) || continue
+        for i in "${!want[@]}"; do [[ ${have[i]} == "${want[i]}" ]] || continue 2; done
+        has "$claimed" "$pid" && continue
+        { read -r s <"$p/stat"; } 2>/dev/null || continue
+        read -r -a f <<<"${s##*) }"
+        [[ ${f[0]} != Z ]] && ((f[19] >= $2)) || continue
+        echo "$pid" >>"$CLAIMED"
+        RUNNING_PID=$pid
+        return 0
+    done
+    return 1
+}
+
+# Give a reopened window back the focus it had when it was closed, but only
+# if nothing has focus and its workspace is the focused screen's: never moving
+# the view, never taking focus from anything. Checked and done in one step
+# inside the compositor.
+refocus() { # refocus PID
+    local addr ws
+    for _ in $(seq 1 30); do
+        addr=$(hyprctl -j clients | jq -r --argjson p "$1" 'first(.[] | select(.pid == $p) | .address) // empty')
+        [[ -n $addr ]] && break
+        sleep 0.1
+    done
+    [[ -n $addr ]] || return 0
+    ws=$(hyprctl -j clients | jq -r --arg a "$addr" '.[] | select(.address == $a) | .workspace.name') || return 0
+    [[ $addr =~ ^0x[0-9a-f]+$ && $ws != *"]==]"* ]] || return 0
+    hyprctl eval "local m = hl.get_active_monitor()
+        if hl.get_active_window() == nil and m and m.active_workspace and m.active_workspace.name == [==[$ws]==] then
+            hl.dispatch(hl.dsp.focus({ window = 'address:$addr' }))
+        end" >/dev/null
+}
+
+# Start a saved process again through Hyprland and wait until it runs. One
+# started since it was stopped (by a supervisor, or by an earlier, slow
+# launch of ours) counts. Three launches that never showed are a failure:
+# the record stays (status lists it) and nothing is started a fourth time.
+relaunch() { # relaunch DIR EXPECTED-CMDLINE-FILE [RULES] [EXTRA ARGS...]
+    local dir=$1 expect=$2 rules=$3 tries since
+    shift 3
+    since=$(cat "$dir/since" 2>/dev/null || echo 0)
+    running_like "$expect" "$since" && return 0
+    tries=$(cat "$dir/tries" 2>/dev/null || echo 0)
+    if ((tries >= 3)); then
+        log "not started again after $tries tries: $(tr '\0' ' ' <"$expect")"
+        return 1
+    fi
+    compositor_exec "$(replay_cmd "$dir" "$@")" "$rules" || return 1
+    echo $((tries + 1)) >"$dir/tries"
+    for _ in $(seq 1 50); do running_like "$expect" "$since" && return 0; sleep 0.1; done
+    log "not running 5 s after starting: $(tr '\0' ' ' <"$expect")"
+    return 1
+}
+
+# --- the shell --------------------------------------------------------------
+
+stop_shell() {
+    local layers pids pid cg unit main n child alive
+    local -A started=()
+    layers=$(hyprctl -j layers) || { log "layers unreadable: shell left running"; return 1; }
+    pids=$(jq -r '[.[].levels[][] | .pid] | unique[]' <<<"$layers")
+    pids=$(for pid in $pids; do has "$PROTECTED" "$pid" || echo "$pid"; done)
+    [[ -n $pids ]] || return 0
+    if [[ ! -e $NOANIM ]]; then
+        hyprctl eval 'GamingModeNoAnim = hl.layer_rule({ name = "gaming-mode-no-anim", match = { namespace = ".*" }, no_anim = true })' >/dev/null &&
+            touch "$NOANIM"
+    fi
+    mkdir -p "$SHELLS"
+    for pid in $pids; do
+        cg=$(cgroup_of "$pid")
+        [[ -n $cg ]] || continue
+        unit=${cg##*/}
+        # Its own service (it is the main process, and the unit holds nothing
+        # protected): stop the unit. Otherwise only the process.
+        if [[ $unit == *.service ]] && ! covers "$cg" "$PROTECTED_CG"; then
+            main=$(systemctl --user show -p MainPID --value -- "$unit" 2>/dev/null)
+            if [[ $main == "$pid" ]]; then
+                n=$(mktemp -d "$SHELLS/XXXX") || continue
+                echo "$unit" >"$n/unit" || { rm -rf "$n"; continue; }
+                if systemctl --user stop -- "$unit"; then log "stopped unit $unit"; else rm -rf "$n"; fi
+                continue
+            fi
+        fi
+        # Only a process whose record is complete is stopped.
+        n=$(mktemp -d "$SHELLS/XXXX") || continue
+        if ! save_process "$pid" "$n" || ! started[$pid]=$(starttime_of "$pid"); then
+            rm -rf "$n"
+            unset "started[$pid]"
+            continue
+        fi
+        uptime_ticks >"$n/since"
+        for child in $(pgrep -P "$pid"); do has "$PROTECTED" "$child" || kill -TERM "$child" 2>/dev/null; done
+        kill -TERM "$pid" 2>/dev/null && log "stopped $(tr '\0' ' ' <"$n/cmdline")"
+    done
+    for _ in $(seq 1 50); do
+        alive=0
+        for pid in "${!started[@]}"; do same_process "$pid" "${started[$pid]}" && alive=1; done
+        ((alive)) || break
+        sleep 0.1
+    done
+    for pid in "${!started[@]}"; do same_process "$pid" "${started[$pid]}" && kill -KILL "$pid" 2>/dev/null; done
+    rmdir "$SHELLS" 2>/dev/null
+    return 0
+}
+
+start_shell() {
+    local n failed=0
+    for n in "$SHELLS"/*/; do
+        [[ -d $n ]] || continue
+        if [[ -e $n/unit ]]; then
+            if systemctl --user start -- "$(<"$n/unit")"; then rm -rf "$n"; else failed=1; fi
+            continue
+        fi
+        # (A supervisor may have started it again meanwhile.)
+        if relaunch "$n" "$n/cmdline" ""; then rm -rf "$n"; else failed=1; fi
+    done
+    rmdir "$SHELLS" 2>/dev/null
+    return $failed
+}
+
+restore_layer_fades() {
+    [[ -e $NOANIM ]] || return 0
+    # Let the shell's layers map without a fade first.
+    for _ in $(seq 1 30); do
+        (($(hyprctl -j layers | jq '[.[].levels[][]] | length') > 0)) && break
+        sleep 0.1
+    done
+    hyprctl eval 'if GamingModeNoAnim then GamingModeNoAnim:set_enabled(false) end' >/dev/null && rm -f "$NOANIM"
+}
+
+# --- terminals over session servers ----------------------------------------
+
+# How to attach again from a session client's process: the command, one
+# argument per line, or a failure if it is not a client this knows.
+reattach_args() {
+    local pid=$1 name
+    case "$(cat "/proc/$pid/comm" 2>/dev/null)" in
+        herdr) tr '\0' '\n' <"/proc/$pid/cmdline" ;; # `herdr [--session X]` attaches
+        tmux)
+            name=$(tmux list-clients -F '#{client_pid} #{session_name}' 2>/dev/null | awk -v p="$pid" '$1 == p {print $2}')
+            [[ -n $name ]] && printf '%s\n' tmux attach-session -t "$name"
+            ;;
+        zellij)
+            name=$(tr '\0' '\n' <"/proc/$pid/environ" | sed -n 's/^ZELLIJ_SESSION_NAME=//p')
+            [[ -n $name ]] && printf '%s\n' zellij attach "$name"
+            ;;
+        screen)
+            name=$(tr '\0' '\n' <"/proc/$pid/environ" | sed -n 's/^STY=//p')
+            [[ -n $name ]] && printf '%s\n' screen -r "$name"
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+# The flag a terminal takes before a command to run ("" when it takes the
+# command bare); fails for a terminal this does not know. (Terminals that
+# serve several windows from one process are left alone below anyway.)
+exec_flag() {
+    case "$1" in
+        kitty | foot) echo "" ;;
+        alacritty | ghostty | konsole | xterm) echo "-e" ;;
+        *) return 1 ;;
+    esac
+}
+
+close_terminals() {
+    local pids pid ws flag child n sub sids exe ok keep start focused
+    local -a sessions targv cargv
+    pids=$(jq -r '[.[].pid] | group_by(.) | map(select(length == 1) | .[0])[]' <<<"$CLIENTS")
+    focused=$(hyprctl -j activewindow | jq -r '.pid // empty')
+    for pid in $pids; do
+        has "$PROTECTED" "$pid" && continue
+        flag=$(exec_flag "$(cat "/proc/$pid/comm" 2>/dev/null)") || continue
+        # Its one child on a terminal (the others are its own helpers).
+        sessions=()
+        for child in $(pgrep -P "$pid"); do
+            [[ $(tty_of "$child") == "?" ]] || sessions+=("$child")
+        done
+        ((${#sessions[@]} == 1)) || continue
+        child=${sessions[0]}
+        reattach_args "$child" >/dev/null || continue
+        # Below the client, a process of the same program is its server: it
+        # must be in a session of its own, or closing the terminal would hang
+        # it up too. Anything else there is the client's own helper (herdr's
+        # ssh to remote hosts), which goes with it and comes back with it.
+        sids=" $(sid_of "$pid") $(sid_of "$child") "
+        exe=$(readlink "/proc/$child/exe")
+        ok=1
+        for sub in $(pgrep -P "$child"); do
+            [[ $(readlink "/proc/$sub/exe") == "$exe" && $sids == *" $(sid_of "$sub") "* ]] && ok=0
+        done
+        ((ok)) || continue
+        ws=$(jq -r --argjson p "$pid" '.[] | select(.pid == $p) | .workspace.name' <<<"$CLIENTS")
+        start=$(starttime_of "$pid") || continue
+        mkdir -p "$TERMS"
+        n=$(mktemp -d "$TERMS/XXXX") || continue
+        save_process "$pid" "$n" || { rm -rf "$n"; continue; }
+        # The terminal's own arguments: without the client, if it was
+        # started with it as its command (and the flag before it).
+        mapfile -d '' -t targv <"$n/cmdline"
+        mapfile -d '' -t cargv <"/proc/$child/cmdline"
+        keep=${#targv[@]}
+        if ((${#cargv[@]} && ${#cargv[@]} < keep)) && [[ ${targv[*]: -${#cargv[@]}} == "${cargv[*]}" ]]; then
+            keep=$((keep - ${#cargv[@]}))
+            [[ -n $flag && ${targv[keep - 1]} == "$flag" ]] && keep=$((keep - 1))
+        fi
+        [[ $pid == "$focused" ]] && touch "$n/focused"
+        echo "$pid $start" >"$n/orig"
+        uptime_ticks >"$n/since"
+        if ! printf '%s\0' "${targv[@]:0:keep}" >"$n/cmdline" || ! echo "$ws" >"$n/workspace" ||
+            ! { [[ -z $flag ]] || echo "$flag"; reattach_args "$child"; } >"$n/attach"; then
+            rm -rf "$n"
+            continue
+        fi
+        kill -TERM "$pid" 2>/dev/null
+        for _ in $(seq 1 50); do same_process "$pid" "$start" || break; sleep 0.1; done
+        # A terminal still closing keeps its record: leaving finds it open
+        # (nothing to do) or gone (reopened).
+        if same_process "$pid" "$start"; then log "terminal $pid not closed after 5 s"; else log "closed terminal $pid on workspace $ws"; fi
+    done
+    rmdir "$TERMS" 2>/dev/null
+    return 0
+}
+
+reopen_terminals() {
+    local n failed=0 ws pid start
+    local -a extra argv
+    for n in "$TERMS"/*/; do
+        [[ -d $n ]] || continue
+        # Never closed (it ignored the request, or is still closing with its
+        # window up): nothing to reopen.
+        read -r pid start <"$n/orig"
+        if same_process "$pid" "$start" &&
+            hyprctl -j clients | jq -e --argjson p "$pid" 'any(.[]; .pid == $p)' >/dev/null; then
+            rm -rf "$n"
+            continue
+        fi
+        mapfile -t extra <"$n/attach"
+        mapfile -d '' -t argv <"$n/cmdline"
+        printf '%s\0' "${argv[@]}" "${extra[@]}" >"$n/expect"
+        ws=$(<"$n/workspace")
+        [[ $ws =~ ^[0-9]+$ ]] || ws="name:$ws"
+        RUNNING_PID=
+        if relaunch "$n" "$n/expect" "workspace = \"$ws silent\", no_initial_focus = true" "${extra[@]}"; then
+            [[ -e $n/focused && -n $RUNNING_PID ]] && refocus "$RUNNING_PID"
+            rm -rf "$n"
+        else
+            failed=1
+        fi
+    done
+    rmdir "$TERMS" 2>/dev/null
+    return $failed
+}
+
+# --- other screens ---------------------------------------------------------
+
+# Every enabled screen but the one showing the gaming workspace and the
+# screens mirroring it (they show the game too).
+disconnect_displays() {
+    local monitors keep name model audio connector
+    local -a matches
+    sudo -n -l "$DISPLAY_HELPER" >/dev/null 2>&1 || return 0
+    monitors=$(hyprctl -j monitors all) || return 1
+    keep=$(jq -r --arg ws "$GAMING_WS" 'first(.[] | select((.disabled | not) and (.mirrorOf // "none") == "none" and .activeWorkspace.name == $ws) | .name) // empty' <<<"$monitors")
+    [[ -n $keep ]] || return 0 # never leave no screen
+    audio=$(audio_screens) || { log "audio routing unreadable: screens left connected"; return 0; }
+    for name in $(jq -r --arg keep "$keep" '.[] | select((.disabled | not) and .name != $keep) | .name' <<<"$monitors"); do
+        if jq -e --arg n "$name" --arg keep "$keep" '(first(.[] | select(.name == $keep)) | .id | tostring) as $id |
+            any(.[]; .name == $n and ((.mirrorOf // "none") | tostring) == $id)' <<<"$monitors" >/dev/null; then
+            log "kept $name connected: it mirrors $keep"
+            continue
+        fi
+        model=$(jq -r --arg n "$name" '.[] | select(.name == $n) | .model' <<<"$monitors")
+        # A display sink plays the game's sound: keep its screen, and every
+        # screen when the name matches none of them.
+        if has "$audio" "$model" || { [[ -n $audio ]] && ! jq -e --arg a "$audio" '[.[].model] as $m | ($a | split("\n")) | all(. as $x | $m | index($x))' <<<"$monitors" >/dev/null; }; then
+            log "kept $name connected: it may play the game's sound"
+            continue
+        fi
+        matches=("$SYS"/class/drm/card*-"$name")
+        # Exactly one connector of that name (several GPUs could each have one).
+        if ((${#matches[@]} != 1)) || [[ ! -e ${matches[0]}/status ]]; then
+            log "kept $name connected: no single connector for it"
+            continue
+        fi
+        connector=${matches[0]##*/}
+        echo "$connector" >>"$DISPLAYS" || continue
+        if sudo -n "$DISPLAY_HELPER" off "$connector"; then
+            log "disconnected $connector"
+        else
+            drop_line "$DISPLAYS" "$connector"
+        fi
+    done
+    return 0
+}
+
+# Hand the connectors back to hotplug detection and wait for Hyprland to
+# have each screen again. One that reports nothing attached (a TV switched off
+# meanwhile) is as restored as it can be; one attached that Hyprland does not
+# show stays recorded, and leaving is tried again.
+reconnect_displays() {
+    local connector failed=0 left="" name status
+    [[ -e $DISPLAYS ]] || return 0
+    while IFS= read -r connector; do
+        [[ -n $connector ]] || continue
+        if ! sudo -n "$DISPLAY_HELPER" detect "$connector"; then
+            left+="$connector"$'\n'
+            failed=1
+            continue
+        fi
+        name=${connector#card*-}
+        for _ in $(seq 1 50); do
+            # (Plain "monitors" leaves out a screen that mirrors another.)
+            hyprctl -j monitors all | jq -e --arg n "$name" 'any(.[]; .name == $n and (.disabled | not))' >/dev/null && continue 2
+            status=$(cat "$SYS/class/drm/$connector/status" 2>/dev/null)
+            [[ $status == disconnected ]] && { log "$connector: nothing attached"; continue 2; }
+            sleep 0.1
+        done
+        log "$connector reconnected, but Hyprland has no $name yet"
+        left+="$connector"$'\n'
+        failed=1
+    done <"$DISPLAYS"
+    write_lines "$DISPLAYS" "$left"
+    return $failed
+}
+
+# --- apps --------------------------------------------------------------------
+
+freeze_apps() {
+    local dir cg
+    local -a new=()
+    while IFS= read -r dir; do
+        [[ -n $(<"$dir/cgroup.procs") ]] || continue  # (cgroup files have no size)
+        [[ $(<"$dir/cgroup.freeze") == 0 ]] || continue # frozen already
+        cg=${dir#/sys/fs/cgroup}
+        covers "$cg" "$PROTECTED_CG" && continue
+        covers "$cg" "$SERVICES" && continue
+        echo "$dir" >>"$FROZEN" || continue
+        if echo 1 >"$dir/cgroup.freeze"; then
+            log "froze ${cg##*/}"
+            new+=("$dir")
+        else
+            drop_line "$FROZEN" "$dir"
+        fi
+    done < <(find "$APPS" -mindepth 1 -type d)
+    ((${#new[@]})) && reclaim_cold "${new[@]}"
+    return 0
+}
+
+# Frozen pages are cold by construction: swap them out now rather than when
+# the game needs the RAM. In the background, a little at a time and only on
+# CPU time nothing else wants (compressing pages into swap is real work), so
+# it never competes with the game; each cgroup until it is thawed or gives
+# nothing more back.
+reclaim_cold() {
+    (
+        exec 9>&- >/dev/null 2>&1
+        chrt --idle -p 0 "$BASHPID" || renice -n 19 -p "$BASHPID"
+        for dir in "$@"; do
+            while [[ $(<"$dir/cgroup.freeze") == 1 ]] && echo 32M >"$dir/memory.reclaim"; do :; done
+        done
+    ) &
+}
+
+# Thaw what this script froze: all of it, or with "protected" only what is
+# now part of the game (or above it).
+thaw_apps() {
+    local dir left="" failed=0
+    [[ -e $FROZEN ]] || return 0
+    while IFS= read -r dir; do
+        if [[ ${1:-} == protected ]] && ! covers "${dir#/sys/fs/cgroup}" "$PROTECTED_CG"; then
+            left+="$dir"$'\n'
+        elif [[ -e $dir/cgroup.freeze ]] && ! echo 0 >"$dir/cgroup.freeze"; then
+            left+="$dir"$'\n'
+            failed=1
+        fi
+    done <"$FROZEN"
+    write_lines "$FROZEN" "$left"
+    return $failed
+}
+
+# --- transitions -----------------------------------------------------------
+
+enter() {
+    touch "$ON"
+    rm -f "$CLAIMED"
+    log "enter (game pids: $(tr '\n' ' ' <<<"$GAME_PIDS"))"
+    if [[ ! -e $ANR ]]; then
+        hyprctl -j getoption misc:enable_anr_dialog |
+            jq -r 'if has("bool") then .bool else .int != 0 end' >"$ANR.new" && mv "$ANR.new" "$ANR" &&
+            hyprctl eval 'hl.config({ misc = { enable_anr_dialog = false } })' >/dev/null
+    fi
+    stop_shell
+    close_terminals
+    disconnect_displays
+    freeze_apps
+}
+
+# While on: the game's windows may have changed. Thaw what is now part of
+# the game, stop a shell that came back, freeze what started since.
+refresh() {
+    thaw_apps protected
+    stop_shell
+    freeze_apps
+}
+
+leave() {
+    local failed=0
+    log "leave"
+    thaw_apps || failed=1
+    reconnect_displays || failed=1
+    start_shell || failed=1
+    reopen_terminals || failed=1
+    restore_layer_fades || failed=1
+    if [[ -e $ANR ]]; then
+        if hyprctl eval "hl.config({ misc = { enable_anr_dialog = $(<"$ANR") } })" >/dev/null; then
+            rm -f "$ANR"
+        else
+            failed=1
+        fi
+    fi
+    if ((failed)); then
+        log "leave incomplete"
+        return 1
+    fi
+    rm -f "$ON" "$PINNED" "$CLAIMED"
+}
+
+# Leave, and on failure try again in 10 s, six times at most.
+leave_or_retry() {
+    local n
+    if leave; then
+        rm -f "$RETRIES"
+        return 0
+    fi
+    n=$(cat "$RETRIES" 2>/dev/null || echo 0)
+    if ((n < 6)); then
+        echo $((n + 1)) >"$RETRIES"
+        sync_later 10
+    else
+        log "leave still incomplete after $n retries: see status"
+    fi
+    return 1
+}
+
+# --- report ----------------------------------------------------------------
+
+snap_cpu() {
+    local p s
+    local -a st
+    for p in /proc/[0-9]*; do
+        { read -r s <"$p/stat"; } 2>/dev/null || continue
+        read -r -a st <<<"${s##*) }" # the fields after "pid (comm) "
+        echo "${p#/proc/} $((st[11] + st[12])) $(tr -d ' ' <"$p/comm" 2>/dev/null)"
+    done | sort -k1,1
+}
+
+report() {
+    local a b
+    a=$(snap_cpu)
+    sleep 3
+    b=$(snap_cpu)
+    echo "CPU over 3 s (ms per second):"
+    join <(echo "$a") <(echo "$b") |
+        awk -v hz="$(getconf CLK_TCK)" '{ms = ($4 - $2) * 1000 / hz / 3; if (ms >= 1) printf "  %6.1f  %s (%s)\n", ms, $3, $1}' |
+        sort -rn | head -15
+    if command -v nvidia-smi >/dev/null; then
+        echo "VRAM: $(nvidia-smi --query-gpu=memory.used,memory.reserved,memory.total --format=csv,noheader) (used, driver-reserved, total)"
+        nvidia-smi | awk '$6 ~ /^(G|C|C\+G)$/ && $(NF-1) ~ /MiB$/ {
+            name = $7; for (i = 8; i < NF - 1; i++) name = name " " $i
+            printf "  %8s  %s (%s)\n", $(NF-1), name, $5 }'
+    fi
+}
+
+# --- main ------------------------------------------------------------------
+
+# Follow the gaming workspace: on while it is shown with a window, or forced.
+follow() {
+    local shown now
+    gaming_shown
+    shown=$?
+    [[ -e $PINNED ]] && shown=0
+    if ((shown == 0)); then
+        rm -f "$EMPTY"
+        if discover; then
+            if [[ -e $ON ]]; then refresh; else enter; fi
+        else
+            log "the game can't be found for sure: nothing changed"
+        fi
+        return 0
+    fi
+    if ((shown == 2)) && [[ -e $ON ]]; then
+        sync_later 2 # Hyprland can't be asked right now: ask again
+        return 1
+    fi
+    if ((shown == 3)) && [[ -e $ON ]]; then
+        # Shown but empty: a game's launcher may just have closed before its
+        # main window opens. Leave only if it is still empty 3 s later.
+        now=$(uptime_s)
+        if [[ ! -e $EMPTY ]]; then
+            echo $((now + 3)) >"$EMPTY"
+            sync_later 3
+            return 0
+        fi
+        if ((now < $(<"$EMPTY"))); then
+            sync_later $(($(<"$EMPTY") - now))
+            return 0
+        fi
+    fi
+    rm -f "$EMPTY"
+    if ((shown == 1 || shown == 3)) && [[ -e $ON ]]; then leave_or_retry; fi
+}
+
+mkdir -p "$STATE_DIR"
+case "${1:-}" in
+    sync | on | off | pause | resume)
+        exec 9>"$STATE_DIR/lock"
+        flock 9
+        ;;
+esac
+
+case "${1:-}" in
+    sync)
+        if [[ ! -e $PAUSED ]]; then
+            follow
+        elif [[ -e $ON ]]; then
+            leave_or_retry
+        fi
+        ;;
+    on)
+        rm -f "$PAUSED"
+        touch "$PINNED"
+        follow
+        ;;
+    off)
+        rm -f "$PINNED"
+        if [[ -e $ON ]]; then leave_or_retry; fi
+        ;;
+    pause)
+        touch "$PAUSED"
+        if [[ -e $ON ]]; then leave_or_retry; fi
+        ;;
+    resume)
+        rm -f "$PAUSED"
+        follow
+        ;;
+    status)
+        if [[ -e $ON ]]; then
+            echo "on$([[ -e $PINNED ]] && echo ' (forced)')"
+        else
+            echo "off$([[ -e $PAUSED ]] && echo ' (paused)')"
+        fi
+        for n in "$SHELLS"/*/; do
+            [[ -d $n ]] || continue
+            if [[ -e $n/unit ]]; then echo "stopped unit: $(<"$n/unit")"; else echo "stopped: $(tr '\0' ' ' <"$n/cmdline")"; fi
+        done
+        for n in "$TERMS"/*/; do
+            [[ -d $n ]] && echo "closed terminal on workspace $(<"$n/workspace"): $(tr '\0' ' ' <"$n/cmdline")$(tr '\n' ' ' <"$n/attach")"
+        done
+        if [[ -e $DISPLAYS ]]; then sed 's/^/disconnected: /' "$DISPLAYS"; fi
+        if [[ -e $FROZEN ]]; then sed "s|^$APPS/|frozen: |" "$FROZEN"; fi
+        ;;
+    report) report ;;
+    *)
+        echo "usage: gaming-mode sync|on|off|pause|resume|status|report" >&2
+        exit 2
+        ;;
+esac
