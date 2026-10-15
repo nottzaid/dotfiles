@@ -1,0 +1,3 @@
+# Gaming mode (files/bin/gaming-mode) disconnects the screens the game is not
+# on while it runs and reconnects them after; only this helper, no password.
+%wheel ALL=(root) NOPASSWD: /usr/local/libexec/gaming-mode-display

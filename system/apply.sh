@@ -58,6 +58,12 @@ if ! compgen -G "/sys/class/bluetooth/hci*" >/dev/null; then
 fi
 systemctl restart systemd-resolved
 
+# Gaming mode: the helper that disconnects the other screens, runnable
+# without a password (files/bin/gaming-mode).
+install -Dm755 "$HERE/libexec/gaming-mode-display" /usr/local/libexec/gaming-mode-display
+install -Dm440 "$HERE/etc/sudoers.d/gaming-mode" /etc/sudoers.d/gaming-mode
+visudo -cf /etc/sudoers.d/gaming-mode >/dev/null
+
 # ZhiXu gamepad: keep it connected and its stick and D-pad unswapped. Last,
 # because it refuses to run over the old patched xpad.
 "$HERE/../components/linux-zhixu-controller-fix/install.sh"
