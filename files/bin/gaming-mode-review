@@ -1,0 +1,685 @@
+#!/usr/bin/python3 -I
+"""How the desktop came back from gaming mode, and what can be done about the rest.
+
+    gaming-mode-review                  the latest stay's review, as JSON
+    gaming-mode-review --watch SECONDS  the same, a line every SECONDS (the panel's feed)
+    gaming-mode-review --readout ID     what the backdrop lists for stay ID, as JSON
+
+The review weighs what is true now (processes, cgroups, screens, the
+compositor) against what the stay's journal says was done (gaming-mode
+writes it) and the records gaming-mode still holds, which are the truth
+about what is left to restore. Every thing put to sleep becomes an item
+whose state is read off those facts the same way for every kind; the rules
+at the end add what concerns the stay as a whole. Each item and finding has
+a severity (ok, info, wait, warn, error), a line of text and the actions
+that make sense, which the panel offers as buttons and runs as
+`gaming-mode act ID ACTION [ARG]`.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+UID = os.getuid()
+STATE = os.path.join(os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{UID}', 'gaming-mode')
+APPS = f'/sys/fs/cgroup/user.slice/user-{UID}.slice/user@{UID}.service/app.slice'
+GAMING_WS = 'gaming'
+RANK = {'ok': 0, 'info': 1, 'wait': 2, 'warn': 3, 'error': 4}
+CLK = os.sysconf('SC_CLK_TCK')
+
+
+# --- reading -----------------------------------------------------------------
+
+def read(path, default=None):
+    try:
+        with open(path, encoding='utf-8', errors='replace') as f:
+            return f.read()
+    except OSError:
+        return default
+
+
+def lines(path):
+    return [l for l in (read(path) or '').splitlines() if l]
+
+
+def journal(sid):
+    events = []
+    for line in lines(os.path.join(STATE, 'sessions', sid, 'events.jsonl')):
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue  # (the line being written)
+        if isinstance(e, dict) and isinstance(e.get('kind'), str):
+            events.append(e)
+    return events
+
+
+def hyprctl(*what):
+    try:
+        out = subprocess.run(['hyprctl', '-j', *what], capture_output=True, text=True, timeout=3).stdout
+        return json.loads(out)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def processes():
+    """{pid: (ppid, comm, ticks, rss KiB, cmdline bytes)} for every process."""
+    procs = {}
+    for name in os.listdir('/proc'):
+        if not name.isdigit():
+            continue
+        stat = read(f'/proc/{name}/stat')
+        if not stat:
+            continue
+        comm = stat[stat.find('(') + 1:stat.rfind(')')]
+        f = stat[stat.rfind(')') + 2:].split()
+        if f[0] == 'Z':
+            continue
+        try:
+            with open(f'/proc/{name}/cmdline', 'rb') as c:
+                cmdline = c.read()
+        except OSError:
+            cmdline = b''
+        procs[int(name)] = (int(f[1]), comm, int(f[11]) + int(f[12]), int(f[21]) * os.sysconf('SC_PAGE_SIZE') // 1024, cmdline)
+    return procs
+
+
+def below(procs, roots):
+    kids = {}
+    for pid, p in procs.items():
+        kids.setdefault(p[0], []).append(pid)
+    seen, queue = set(), [r for r in roots if r in procs]
+    while queue:
+        pid = queue.pop()
+        if pid not in seen:
+            seen.add(pid)
+            queue.extend(kids.get(pid, []))
+    return seen
+
+
+def vram_by_pid():
+    try:
+        out = subprocess.run(['nvidia-smi'], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    usage = {}
+    for line in out.splitlines():
+        f = line.split()
+        if len(f) > 7 and f[5] in ('G', 'C', 'C+G') and re.fullmatch(r'\d+MiB', f[-2]) and f[4].isdigit():
+            usage[int(f[4])] = int(f[-2][:-3])
+    return usage
+
+
+def frozen_name(e):
+    """A frozen app's name: the class of its window when it had one (gaming-mode
+    notes it), else its unit's."""
+    return short(e.get('name') or '') or app_name(e.get('cgroup', ''))
+
+
+def short(name):
+    if re.fullmatch(r'[a-z]+(\.[A-Za-z0-9_-]+){2,}', name):  # org.telegram.desktop
+        name = [p for p in name.split('.') if p.lower() != 'desktop'][-1]
+    return name
+
+
+def app_name(cg):
+    """A unit's name as a person would say it: app-Hyprland-kitty-3862fb78.scope
+    is kitty, app-Some\\x20Game@uuid.service is Some Game."""
+    unit = cg.rstrip('/').rsplit('/', 1)[-1]
+    unit = re.sub(r'\\x([0-9a-fA-F]{2})', lambda m: chr(int(m.group(1), 16)), unit)
+    unit = re.sub(r'\.(scope|service|slice)$', '', unit)
+    unit = re.sub(r'@.*$', '', unit)
+    unit = re.sub(r'^app-', '', unit)
+    unit = re.sub(r'^(Hyprland|hyprland|uwsm|niri|sway)-', '', unit)
+    unit = re.sub(r'(-[0-9a-f]{6,}|-\d+(-\d+)?)$', '', unit)
+    return short(unit) or cg.rsplit('/', 1)[-1]
+
+
+def size(mib):
+    return f'{mib / 1024:.1f} GiB' if mib >= 1024 else f'{mib:.0f} MiB'
+
+
+def span(seconds):
+    m = int(seconds // 60)
+    if m < 1:
+        return f'{int(seconds)} s'
+    return f'{m // 60} h {m % 60:02d} min' if m >= 60 else f'{m} min'
+
+
+def action(ident, label, arg='', style='plain', confirm=None):
+    return {'id': ident, 'arg': arg, 'label': label, 'style': style, 'confirm': confirm}
+
+
+# --- the readout on the backdrop ------------------------------------------------
+
+def readout(sid):
+    events = journal(sid)
+    enter = next((e for e in events if e['kind'] == 'enter'), None)
+    blocks, apps = [], {}
+    for e in events:
+        if e['kind'] == 'stop':
+            blocks.append({'kind': 'shell', 'text': e.get('name') or 'shell'})
+        elif e['kind'] == 'screen' and e.get('action') == 'off':
+            blocks.append({'kind': 'screen', 'text': e.get('name') or e.get('connector', '')})
+        elif e['kind'] == 'screen' and e.get('action') == 'mirror' and e.get('ok'):
+            blocks.append({'kind': 'mirror', 'text': 'TV mirrors'})
+        elif e['kind'] == 'freeze':
+            name = frozen_name(e)
+            apps[name] = apps.get(name, 0) + 1
+        elif e['kind'] == 'close':
+            blocks.append({'kind': 'terminal', 'text': e.get('client') or e.get('terminal') or 'terminal'})
+    at = next((i for i, b in enumerate(blocks) if b['kind'] == 'terminal'), len(blocks))
+    blocks[at:at] = [{'kind': 'app', 'text': n if c == 1 else f'{n} ×{c}', 'count': c} for n, c in apps.items()]
+    vram = [e for e in events if e['kind'] == 'vram']
+    if vram:
+        freed = vram[-1].get('desktop_before', 0) - vram[-1].get('desktop_after', 0)
+        if freed >= 16:
+            blocks.append({'kind': 'vram', 'text': f'+{size(freed)} vram'})
+    since = time.strftime('%H:%M', time.localtime(enter['t'])) if enter else None
+    return {'since': since, 'blocks': blocks}
+
+
+# --- the review -------------------------------------------------------------------
+
+class Watch:
+    """What one tick needs from the last (CPU time, slow probes done once)."""
+
+    def __init__(self):
+        self.ticks = None
+        self.at = None
+        self.vram = None
+        self.vram_at = 0
+        self.dumps = None
+
+
+def latest_session():
+    sid = (read(os.path.join(STATE, 'session')) or '').strip()
+    return sid if re.fullmatch(r'[0-9-]+', sid or '') else None
+
+
+def game_windows(clients):
+    return [c for c in clients or [] if c.get('workspace', {}).get('name') == GAMING_WS and c.get('class') != 'steam']
+
+
+def game_name(events):
+    for e in reversed(events):
+        wins = e.get('windows') if e['kind'] == 'game' else e.get('game') if e['kind'] in ('enter', 'leave') else None
+        for w in wins or []:
+            if w.get('class') != 'steam' and (w.get('title') or w.get('class')):
+                title = (w.get('title') or w.get('class')).strip()
+                return title if len(title) <= 42 else title[:41] + '…'
+    return None
+
+
+def coredumps(since, comms):
+    try:
+        out = subprocess.run(['coredumpctl', '--json=short', '--no-pager', 'list', f'--since=@{int(since)}'],
+                             capture_output=True, text=True, timeout=5).stdout
+        dumps = json.loads(out) if out.strip() else []
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+    found = []
+    for d in dumps if isinstance(dumps, list) else []:
+        exe = os.path.basename(str(d.get('exe', '')))
+        if exe and any(exe.startswith(c[:15]) or c.startswith(exe[:15]) for c in comms):
+            found.append({'exe': exe, 'sig': d.get('sig')})
+    return found
+
+
+def signame(sig):
+    try:
+        import signal
+        return signal.Signals(int(sig)).name
+    except (ValueError, TypeError):
+        return f'signal {sig}'
+
+
+def review(watch):
+    sid = latest_session()
+    if not sid:
+        return {'session': None, 'severity': 'ok', 'title': 'nothing to review', 'items': [], 'findings': [], 'stats': []}
+    events = journal(sid)
+    now = time.time()
+    on, left = os.path.exists(f'{STATE}/on'), os.path.exists(f'{STATE}/left')
+    paused, retries = os.path.exists(f'{STATE}/paused'), int((read(f'{STATE}/retries') or '0').strip() or 0)
+    pending_shells = set(os.listdir(f'{STATE}/shell')) if os.path.isdir(f'{STATE}/shell') else set()
+    pending_terms = set(os.listdir(f'{STATE}/terms')) if os.path.isdir(f'{STATE}/terms') else set()
+    pending_screens = set(lines(f'{STATE}/displays'))
+    frozen = {l[len(APPS) + 1:] for l in lines(f'{STATE}/frozen') if l.startswith(APPS + '/')}
+    clients = hyprctl('clients')
+    monitors = hyprctl('monitors', 'all')
+    procs = processes()
+    # Given up, unless tried again since.
+    gave_up = False
+    for e in events:
+        if e['kind'] == 'gave_up':
+            gave_up = True
+        elif e['kind'] == 'act' and e.get('action') in ('retry', 'forget'):
+            gave_up = False
+    gave_up = gave_up and on and left
+    last = {}
+    for e in events:  # the latest event of each kind about each record
+        last[(e['kind'], e.get('record') or e.get('cgroup') or e.get('connector') or '')] = e
+
+    def tries(record, kind):
+        return int((read(f'{STATE}/{kind}/{record}/tries') or '0').strip() or 0)
+
+    def pending(state, text, record):
+        """An item whose restore is still to come: being retried, or failed.
+        (Trying again is the stay's, one leave for all: see the rules.)"""
+        if gave_up or tries(*record) >= 3:
+            return 'error', text, [action('forget', 'forget it', arg='/'.join(reversed(record)),
+                                          confirm='stop trying? (a screen is just handed back)')]
+        return 'wait', state, []
+
+    items = []
+    # The shell: stopped, then started again; one that ran again and has since
+    # ended can be started again from its record.
+    for e in (e for e in events if e['kind'] == 'stop'):
+        rec, name = e.get('record', ''), e.get('name') or 'shell'
+        kept = f'{STATE}/sessions/{sid}/restored/{rec}'
+        if on and not left:
+            sev, text, acts = 'info', 'stopped', []
+        elif rec in pending_shells:
+            sev, text, acts = pending('starting again…', 'did not start again', (rec, 'shell'))
+        elif not os.path.isdir(kept) or running((read(f'{kept}/unit') or '').strip(), kept, procs):
+            sev, text, acts = 'ok', 'running again', []
+        else:
+            sev, text, acts = 'warn', 'came back, then ended', [action('restart', 'start it', arg=rec, style='primary')]
+        items.append({'kind': 'shell', 'name': name, 'severity': sev, 'text': text, 'actions': acts})
+
+    # The TV: switched to mirror the game, extended again after.
+    tv = tv_item(events, on and not left, gave_up)
+    if tv:
+        items.append(tv)
+
+    # Screens an earlier version turned off: off, then back; one with nothing
+    # attached any more is fine.
+    for e in (e for e in events if e['kind'] == 'screen' and e.get('action') in ('off', 'kept') and 'layout' not in e):
+        name, conn = e.get('name') or '', e.get('connector') or ''
+        if e.get('action') != 'off':
+            why = {'mirror': 'mirrors the game', 'sound': 'may play its sound', 'connector': 'not one connector'}
+            items.append({'kind': 'screen', 'name': name or 'screens', 'severity': 'info',
+                          'text': 'stayed on: ' + why.get(e.get('reason'), 'kept'), 'actions': []})
+            continue
+        back = last.get(('reconnect', conn))
+        if conn in pending_screens:
+            sev, text, acts = pending('reconnecting…', 'not back', (conn, 'screen'))
+            if on and not left:
+                sev, text, acts = 'info', 'off', []
+        elif back and back.get('attached') is False:
+            sev, text, acts = 'info', 'nothing attached (switched off?)', []
+        elif monitors is not None and not any(m.get('name') == name for m in monitors):
+            sev, text, acts = 'info', 'back, then gone (switched off?)', []
+        else:
+            sev, text, acts = 'ok', 'back', []
+        items.append({'kind': 'screen', 'name': name, 'severity': sev, 'text': text, 'actions': acts})
+
+    # Apps: frozen and pushed to swap, then thawed.
+    swapped = 0
+    for e in (e for e in events if e['kind'] == 'freeze'):
+        cg = e.get('cgroup', '')
+        thaw = last.get(('thaw', cg))
+        if thaw and thaw.get('ok'):
+            swapped += thaw.get('swap') or 0
+        path = f'{APPS}/{cg}'
+        events_file = read(f'{path}/memory.events') or ''
+        oom = int((re.search(r'^oom_kill (\d+)', events_file, re.M) or [0, 0])[1])
+        oom = oom - e['oom_kills'] if isinstance(e.get('oom_kills'), int) else 0  # (since it was frozen)
+        if cg in frozen:
+            if on and not left:
+                sev, text, acts = 'info', 'asleep', []
+            else:
+                sev, text, acts = pending('waking…', 'still frozen', (cg, 'frozen'))
+                acts = [a for a in acts if a['id'] != 'forget']
+        elif oom:
+            sev, text, acts = 'error', 'killed by the kernel for memory', []
+        elif not os.path.isdir(path) or not (read(f'{path}/cgroup.procs') or '').strip():
+            sev, text, acts = 'info', 'closed since', []
+        elif thaw and thaw.get('game'):
+            sev, text, acts = 'info', 'joined the game', []
+        else:
+            still = int((read(f'{path}/memory.swap.current') or '0').strip() or 0) // 1048576
+            sev, text, acts = 'ok', 'awake' + (f' · {size(still)} still in swap' if still >= 32 else ''), []
+        items.append({'kind': 'app', 'name': frozen_name(e), 'severity': sev, 'text': text, 'actions': acts})
+
+    # Terminals: closed, then reopened on their workspaces.
+    for e in (e for e in events if e['kind'] == 'close'):
+        rec = e.get('record', '')
+        name = f"{e.get('client') or e.get('terminal') or 'terminal'} on {e.get('workspace', '?')}"
+        if rec in pending_terms:
+            sev, text, acts = ('info', 'closed', []) if on and not left else pending('reopening…', 'not reopened', (rec, 'terms'))
+        else:
+            sev, text, acts = 'ok', 'reopened', []
+        items.append({'kind': 'terminal', 'name': name, 'severity': sev, 'text': text, 'actions': acts})
+
+    # Records an earlier stay left (its leave never finished): items too, or
+    # what blocks every leave since could be neither seen nor forgotten.
+    known = {(e['kind'], e.get('record') or e.get('connector') or e.get('cgroup')) for e in events}
+    for rec in sorted(pending_shells):
+        if ('stop', rec) not in known and not (on and not left):
+            unit = (read(f'{STATE}/shell/{rec}/unit') or '').strip()
+            argv = (read(f'{STATE}/shell/{rec}/cmdline') or '').split('\0')
+            name = unit.removesuffix('.service') or os.path.basename(argv[0]) or 'shell'
+            sev, text, acts = pending('starting again…', 'did not start again', (rec, 'shell'))
+            items.append({'kind': 'shell', 'name': name, 'severity': sev, 'text': text + ' (earlier stay)', 'actions': acts})
+    for rec in sorted(pending_terms):
+        if ('close', rec) not in known and not (on and not left):
+            ws = (read(f'{STATE}/terms/{rec}/workspace') or '?').strip()
+            sev, text, acts = pending('reopening…', 'not reopened', (rec, 'terms'))
+            items.append({'kind': 'terminal', 'name': f'terminal on {ws}', 'severity': sev,
+                          'text': text + ' (earlier stay)', 'actions': acts})
+    for conn in sorted(pending_screens):
+        if ('screen', conn) not in known and not (on and not left):
+            sev, text, acts = pending('reconnecting…', 'not back', (conn, 'screen'))
+            items.append({'kind': 'screen', 'name': re.sub(r'^card\d+-', '', conn), 'severity': sev,
+                          'text': text + ' (earlier stay)', 'actions': acts})
+    for cg in sorted(frozen):
+        if ('freeze', cg) not in known and not (on and not left):
+            sev, text, acts = pending('waking…', 'still frozen', (cg, 'frozen'))
+            items.append({'kind': 'app', 'name': app_name(cg), 'severity': sev, 'text': text + ' (earlier stay)',
+                          'actions': [a for a in acts if a['id'] != 'forget']})
+
+    # Alike things alike: two kitty windows asleep and awake are "kitty ×2".
+    merged = []
+    for item in items:
+        twin = next((m for m in merged if all(m[k] == item[k] for k in ('kind', 'name', 'severity', 'text'))
+                     and not m['actions'] and not item['actions']), None)
+        if twin:
+            twin['count'] = twin.get('count', 1) + 1
+        else:
+            merged.append(item)
+    for m in merged:
+        n = m.pop('count', 1)
+        if n > 1:
+            m['name'] += f' ×{n}'
+    items = merged
+
+    # The stay as a whole.
+    enter = next((e for e in events if e['kind'] == 'enter'), None)
+    leave = next((e for e in reversed(events) if e['kind'] == 'leave' and e.get('trigger') != 'retry'), None)
+    start = enter['t'] if enter else now
+    end = leave['t'] if leave else now
+    name = game_name(events) or 'the game'
+    wins = game_windows(clients)
+    findings = []
+    game = None
+    if wins:
+        roots = {w['pid'] for w in wins if isinstance(w.get('pid'), int)}
+        tree = below(procs, roots)
+        ticks = sum(procs[p][2] for p in tree)
+        cpu = None
+        if watch.ticks is not None and watch.at and now > watch.at:
+            cpu = max(0.0, (ticks - watch.ticks) / CLK / (now - watch.at) * 100)
+        watch.ticks, watch.at = ticks, now
+        if watch.vram is None or now - watch.vram_at >= 10:  # (nvidia-smi is not free)
+            watch.vram, watch.vram_at = vram_by_pid(), now
+        vram = sum(v for p, v in (watch.vram or {}).items() if p in tree) if watch.vram is not None else None
+        rss = sum(procs[p][3] for p in tree) // 1024
+        game = {'name': name, 'running': True, 'cpu': cpu, 'vram': vram, 'rss': rss}
+    else:
+        watch.ticks = None
+
+    rules = [
+        rule_leave_stuck, rule_retrying, rule_paused, rule_on, rule_game_running,
+        rule_close_slow, rule_game_ended, rule_oom, rule_tv,
+    ]
+    facts = {
+        'events': events, 'on': on, 'left': left, 'paused': paused, 'retries': retries, 'gave_up': gave_up,
+        'game': game, 'name': name, 'start': start, 'end': end, 'now': now, 'leave': leave, 'watch': watch,
+        'procs': procs, 'tv': display_mode(),
+    }
+    for rule in rules:
+        found = rule(facts)
+        if found:
+            findings.append(found)
+
+    stats = [{'label': 'in game', 'value': span(end - start)}]
+    vram = [e for e in events if e['kind'] == 'vram']
+    if vram:
+        freed = vram[-1].get('desktop_before', 0) - vram[-1].get('desktop_after', 0)
+        if freed >= 16:
+            stats.append({'label': 'vram for the game', 'value': '+' + size(freed)})
+    if swapped >= 16:
+        stats.append({'label': 'pushed to swap', 'value': size(swapped)})
+    napps = sum(1 for e in events if e['kind'] == 'freeze')
+    if napps:
+        stats.append({'label': 'apps asleep', 'value': str(napps)})
+
+    severity = max([i['severity'] for i in items] + [f['severity'] for f in findings] + ['ok'], key=RANK.get)
+    if on and not left:
+        title = 'gaming mode is on'
+    elif severity in ('warn', 'error'):
+        title = 'not everything came back' if any(i['severity'] in ('warn', 'error') for i in items) else 'welcome back'
+    elif severity == 'wait':
+        title = 'coming back…'
+    else:
+        title = 'welcome back'
+    trig = (leave or {}).get('trigger')
+    subtitle = f'{span(end - start)} of {name}' if name != 'the game' else f'{span(end - start)} in gaming mode'
+    if trig == 'pause':
+        subtitle += ' · paused'
+    light, art = backdrop()
+    return {
+        'session': sid, 'severity': severity, 'title': title, 'subtitle': subtitle,
+        'light': light, 'art': art,
+        'since': time.strftime('%H:%M', time.localtime(start)), 'items': items,
+        'findings': findings, 'stats': stats, 'game': game,
+    }
+
+
+def tv_item(events, staying, gave_up):
+    """The TV through the stay (display-mode): mirrored for it and extended
+    again after, or left as it was. None where there is no TV to speak of."""
+    tv = [e for e in events if e['kind'] == 'screen' and (e.get('action') in ('mirror', 'extend') or 'layout' in e)]
+    start = next((e for e in tv if e.get('action') != 'extend'), None)
+    end = next((e for e in reversed(tv) if e.get('action') == 'extend'), None)
+    if not start:
+        return None
+
+    def item(sev, text):
+        return {'kind': 'screen', 'name': 'TV', 'severity': sev, 'text': text, 'actions': []}
+
+    if start['action'] == 'mirror' and not start.get('ok'):
+        return item('info', 'could not mirror: left extended')
+    if staying:
+        if start['action'] == 'mirror':
+            return item('info', 'mirrors the game')
+        return {'mirror': item('info', 'mirrors the game'), 'off': item('info', 'disconnected')}.get(start.get('layout'))
+    if os.path.exists(f'{STATE}/mirrored'):  # (still to switch back)
+        return item('error', 'still mirrored') if gave_up else item('wait', 'extending again…')
+    if end:
+        return item('ok', {'mirror': 'extended again', 'extended': 'extended (switched meanwhile)',
+                           'off': 'disconnected · comes back extended',
+                           'none': 'unplugged · comes back extended'}.get(end.get('found'), 'extended again'))
+    return {'mirror': item('info', 'mirrored before, left so'), 'off': item('info', 'disconnected, left so')}.get(start.get('layout'))
+
+
+def display_mode():
+    """The TV's layout now (display-mode status): mirror, extended, off,
+    none; None on a host without display-mode."""
+    tool = os.path.join(os.environ.get('GAMING_MODE_BIN') or os.path.expanduser('~/.local/bin'), 'display-mode')
+    if not os.access(tool, os.X_OK):
+        return None
+    try:
+        out = subprocess.run([tool, 'status'], capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    mode = out.stdout.strip()
+    return mode if out.returncode == 0 and mode in ('mirror', 'extended', 'off', 'none') else None
+
+
+def backdrop():
+    """The latest backdrop art (gaming-mode-art) and the colour its lights were,
+    for the panel to wear."""
+    cache = os.path.join(os.environ.get('XDG_CACHE_HOME') or os.path.expanduser('~/.cache'), 'gaming-mode')
+    try:
+        metas = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith('art-') and f.endswith('.json')]
+        latest = max(metas, key=os.path.getmtime)
+        with open(latest) as f:
+            info = json.load(f)
+        r, g, b = info['light']
+        # (Of the same wallpaper, the smallest drawing: the panel shows a strip.)
+        same = []
+        for meta in metas:
+            try:
+                with open(meta) as f:
+                    if json.load(f).get('wallpaper') == info.get('wallpaper'):
+                        same.append(meta[:-len('.json')] + '.png')
+            except (OSError, ValueError):
+                pass
+        arts = [a for a in same if os.path.exists(a)]
+        return f'#{r:02x}{g:02x}{b:02x}', min(arts, key=os.path.getsize) if arts else None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, None
+
+
+def running(unit, kept, procs):
+    """Whether a restored shell runs: its unit is active, or a process has its
+    exact command line."""
+    if unit:
+        try:
+            return subprocess.run(['systemctl', '--user', '-q', 'is-active', '--', unit], timeout=3).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return True
+    try:
+        with open(f'{kept}/cmdline', 'rb') as f:
+            want = f.read()
+    except OSError:
+        return True
+    return any(p[4] == want for p in procs.values())
+
+
+# --- rules about the stay as a whole ------------------------------------------------
+# Each takes the facts and returns one finding or None.
+
+def rule_leave_stuck(f):
+    if f['gave_up']:
+        return {'severity': 'error', 'text': f'Not everything came back after {f["retries"]} more tries.',
+                'actions': [action('retry', 'try again', style='primary')]}
+
+
+def rule_retrying(f):
+    if f['on'] and f['left'] and not f['gave_up']:
+        return {'severity': 'wait', 'text': f'Trying again every 10 s ({f["retries"]} of 6 so far).',
+                'actions': [action('retry', 'try now')]}
+
+
+def rule_paused(f):
+    if f['paused']:
+        return {'severity': 'info', 'text': 'Paused: the desktop stays up while a game is on screen.',
+                'actions': [action('resume', 'resume gaming mode', style='primary')]}
+
+
+def rule_on(f):
+    if f['on'] and not f['left']:
+        return {'severity': 'info', 'text': 'Gaming mode is on again.', 'actions': []}
+
+
+def rule_game_running(f):
+    g = f['game']
+    if not g or f['on'] and not f['left']:
+        return None
+    parts = []
+    if g['cpu'] is not None:
+        parts.append(f'{g["cpu"]:.0f}% cpu')
+    if g['vram']:
+        parts.append(f'{size(g["vram"])} vram')
+    if g['rss']:
+        parts.append(f'{size(g["rss"])} ram')
+    acts = [action('back', 'back to the game', style='primary')]
+    if not f['paused']:
+        acts.append(action('back-paused', 'back, keep the desktop'))
+    acts.append(action('close', 'close it', style='danger', confirm='sure? unsaved progress is lost'))
+    return {'severity': 'info', 'text': f'{g["name"]} is still running', 'detail': ' · '.join(parts),
+            'actions': acts}
+
+
+def rule_close_slow(f):
+    asked = [e for e in f['events'] if e['kind'] == 'act' and e.get('action') == 'close']
+    if f['game'] and asked and f['now'] - asked[-1]['t'] > 8:
+        return {'severity': 'warn', 'text': f'{f["game"]["name"]} has not closed.',
+                'actions': [action('kill', 'end it now', style='danger',
+                                   confirm='end it at once? anything unsaved is lost')]}
+
+
+def rule_game_ended(f):
+    if f['game'] or f['on'] and not f['left']:
+        return None
+    leave = f['leave']
+    names = set()
+    for e in f['events']:
+        for w in (e.get('game') or e.get('windows') or []) if e['kind'] in ('enter', 'leave', 'game') else []:
+            if isinstance(w.get('pid'), int) and w.get('class') != 'steam':
+                p = f['procs'].get(w['pid'])
+                names.add(p[1] if p else (w.get('class') or ''))
+    w = f['watch']
+    if w.dumps is None:
+        w.dumps = coredumps(f['start'], {n for n in names if n})
+    if w.dumps:
+        d = w.dumps[-1]
+        return {'severity': 'error', 'text': f'{f["name"]} crashed ({d["exe"]}, {signame(d["sig"])}).', 'actions': []}
+    closed = [e for e in f['events'] if e['kind'] == 'game_closed']
+    if closed:
+        at = time.strftime('%H:%M', time.localtime(closed[-1]['t']))
+        return {'severity': 'ok', 'text': f'{f["name"]} closed at {at}.', 'actions': []}
+    if leave and leave.get('trigger') == 'empty':  # (an earlier version's stay)
+        return {'severity': 'ok', 'text': f'{f["name"]} closed.', 'actions': []}
+    return None
+
+
+def rule_oom(f):
+    enter = next((e for e in f['events'] if e['kind'] == 'enter'), None)
+    if not enter or not isinstance(enter.get('oom_kills'), int):
+        return None
+    vmstat = read('/proc/vmstat') or ''
+    now = int((re.search(r'^oom_kill (\d+)', vmstat, re.M) or [0, enter['oom_kills']])[1])
+    n = now - enter['oom_kills']
+    if n > 0:
+        return {'severity': 'warn', 'text': f'The kernel ended {n} process{"es" if n > 1 else ""} for memory since {time.strftime("%H:%M", time.localtime(f["start"]))}.',
+                'actions': []}
+
+
+def rule_tv(f):
+    """The TV, connected or not: one button for either."""
+    mode = f['tv']
+    if mode in ('mirror', 'extended'):
+        return {'severity': 'ok', 'text': f'The TV is {"mirroring" if mode == "mirror" else "extended"}.',
+                'detail': 'disconnecting it frees the video memory it holds',
+                'actions': [action('screen-off', 'disconnect it')]}
+    if mode == 'off':
+        return {'severity': 'ok', 'text': 'The TV is disconnected.', 'actions': [action('screen-on', 'connect it')]}
+
+
+def main(argv):
+    if len(argv) == 3 and argv[1] == '--readout':
+        if not re.fullmatch(r'[0-9-]+', argv[2]):
+            return 2
+        json.dump(readout(argv[2]), sys.stdout)
+        print()
+        return 0
+    watch = Watch()
+    if len(argv) == 3 and argv[1] == '--watch':
+        every = max(0.5, float(argv[2]))
+        try:
+            while True:
+                try:
+                    tick = review(watch)
+                except Exception as e:  # (a record vanishing mid-read, say: next tick)
+                    print(f'gaming-mode-review: {e!r}', file=sys.stderr)
+                else:
+                    print(json.dumps(tick), flush=True)
+                time.sleep(every)
+        except (BrokenPipeError, KeyboardInterrupt):
+            return 0
+    if len(argv) == 1:
+        print(json.dumps(review(watch), indent=2))
+        return 0
+    print(__doc__.split('\n\n')[1], file=sys.stderr)
+    return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

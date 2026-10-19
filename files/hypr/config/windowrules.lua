@@ -136,6 +136,12 @@ hl.window_rule({
     no_focus = true,
 })
 
+-- Gaming mode's backdrop (swaybg, the only "wallpaper" here) and review panel
+-- close without a fade: a fade is a screen-sized snapshot, taken as a game
+-- starts. The panel's own blur.
+hl.layer_rule({ name = "gaming-mode", match = { namespace = "^(wallpaper|gaming-mode-.+)$" }, no_anim = true })
+hl.layer_rule({ name = "gaming-mode-panel", match = { namespace = "^gaming-mode-panel$" }, blur = true, ignore_alpha = 0.3 })
+
 -- Noctalia layer rule
 hl.layer_rule({
     name = "noctalia",

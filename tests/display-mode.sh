@@ -129,4 +129,55 @@ wait
 
 if run sideways 2>/dev/null; then fail "an unknown action exited 0"; fi
 
-printf '%s\n' 'PASS display-mode toggles mirror and extended through host.lua, recovers from a failed reload, and ignores presses during a switch'
+# Disconnecting the TV goes through the root helper with its one connector,
+# is recorded until connected again (status says so), and a refused helper
+# leaves nothing recorded. A layout asked for while it is off connects it first.
+mkdir -p "$TMP/sys/class/drm/card1-HDMI-A-2" "$TMP/sys/class/drm/card1-HDMI-A-1"
+echo connected >"$TMP/sys/class/drm/card1-HDMI-A-2/status"
+cat >"$TMP/bin/sudo" <<'EOF'
+#!/usr/bin/env bash
+[[ $1 == -n ]] && shift
+printf 'helper %s\n' "${*:2}" >>"$FAKE/log"
+[[ ! -e "$FAKE/helper-fails" ]]
+EOF
+chmod +x "$TMP/bin/sudo"
+link() { DISPLAY_MODE_SYS="$TMP/sys" DISPLAY_MODE_LINK="$TMP/run/display-link" DISPLAY_MODE_HELPER=/x/helper run "$@"; }
+layout extended
+link off
+[[ "$(grep helper "$TMP/log")" == "helper off card1-HDMI-A-2" ]] || fail "off ran: $(cat "$TMP/log")"
+check "off" 0 "TV disconnected"
+[[ "$(link status)" == off ]] || fail "status while disconnected is $(link status)"
+link off
+check "off when off" 0 ""
+link link
+[[ "$(grep helper "$TMP/log")" == "helper detect card1-HDMI-A-2" ]] || fail "link while off ran: $(cat "$TMP/log")"
+check "link while off" 0 "TV connected"
+[[ "$(link status)" == extended ]] || fail "status after connecting is $(link status)"
+touch "$TMP/helper-fails"
+if link off 2>/dev/null; then fail "a refused helper exited 0"; fi
+[[ "$(link status)" == extended ]] || fail "a refused disconnect left it recorded off"
+rm -f "$TMP/helper-fails"
+link off
+link mirror
+[[ "$(grep -c 'helper detect' "$TMP/log")" == 1 && "$(link status)" == mirror ]] ||
+    fail "mirror while off did not connect first: $(cat "$TMP/log")"
+# While it is off, the layout it comes back in can be recorded without
+# connecting it, printing the one recorded before (host.lua's own with none).
+# While it is connected, record changes nothing.
+rc=0
+link record extended >/dev/null || rc=$?
+[[ $rc == 3 && "$(cat "$mode_file")" == mirror ]] || fail "record while connected: exit $rc, recorded $(cat "$mode_file")"
+link off
+[[ "$(link record extended)" == mirror && "$(cat "$mode_file")" == extended ]] ||
+    fail "record while off recorded $(cat "$mode_file")"
+[[ -z "$(grep helper "$TMP/log")" && "$(link status)" == off ]] || fail "record connected the TV: $(cat "$TMP/log")"
+rm -f "$mode_file"
+[[ "$(link record mirror)" == extended ]] || fail "with nothing recorded, record did not print host.lua's default"
+if link record sideways 2>/dev/null; then fail "an unknown layout was recorded"; fi
+link on
+jq -n '[{name: "HDMI-A-1", mirrorOf: "none"}]' >"$TMP/monitors.json"
+[[ "$(link status)" == none ]] || fail "status with no TV attached is $(link status)"
+[[ "$(link record extended)" == mirror && "$(cat "$mode_file")" == extended ]] ||
+    fail "record with no TV attached recorded $(cat "$mode_file")"
+
+printf '%s\n' 'PASS display-mode toggles mirror and extended through host.lua, recovers from a failed reload, ignores presses during a switch, disconnects and connects the TV, and records the layout it comes back in'

@@ -13,6 +13,12 @@
       monitor = "HDMI-A-2";
       color = "#00000000";
     };
+    # The TV's link: mirror, extended or off; click disconnects or connects it.
+    widget.tv = {
+      type = "zaid/i3bar:screen";
+      color = "#00000000";
+    };
+    widget.sep_6.type = "zaid/i3bar:separator";
     bar.default.monitor.big = {
       match = "HDMI-A-2";
       start = [
@@ -22,6 +28,11 @@
       ];
     };
   };
+
+  dotfiles.noctaliaStatusExtra = [
+    "tv"
+    "sep_6"
+  ];
 
   home.file.".local/bin/hypr-display-reload" = {
     source = ../files/bin/hypr-display-reload;
