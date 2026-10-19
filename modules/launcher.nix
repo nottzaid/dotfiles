@@ -5,7 +5,6 @@
 let
   home = config.home.homeDirectory;
   curate = "${home}/.local/bin/launcher-curate";
-  link = config.lib.file.mkOutOfStoreSymlink;
 in
 {
   home.file.".local/bin/launcher-curate" = {
@@ -35,12 +34,4 @@ in
     ];
     Install.WantedBy = [ "default.target" ];
   };
-
-  # Zeron self-updates under ~/.zeron/app/current (installed on both
-  # machines); link its own desktop entry and icon so the launcher follows
-  # every update. The icon goes under 256x256: without an index.theme in
-  # ~/.local/share/icons/hicolor, Noctalia 5.1 scans only scalable and
-  # 256x256 down to 32x32 (not 512x512 or 1024x1024).
-  xdg.dataFile."applications/zeron.desktop".source = link "${home}/.zeron/app/current/zeron.desktop";
-  xdg.dataFile."icons/hicolor/256x256/apps/zeron.png".source = link "${home}/.zeron/app/current/zeron.png";
 }
