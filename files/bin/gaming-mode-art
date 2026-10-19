@@ -1,0 +1,293 @@
+#!/usr/bin/python3 -I
+"""The picture gaming mode leaves on screen while the desktop sleeps.
+
+It is the wallpaper with the lights out: its colours reduced to a few
+steps of the night's own hue in an ordered dither, everything warm, bright
+and saturated (a moon, a lamp, a window) still lit and glowing, and on it the
+words "gaming mode" in that light, then a row of blocks for what was put to
+sleep. It is a still image: once drawn, it costs nothing to keep.
+
+    gaming-mode-art plain OUTPUT WIDTH HEIGHT
+        Print the path of the picture without the readout, drawing it first
+        unless it is cached for that wallpaper and size.
+    gaming-mode-art prepare OUTPUT WIDTH HEIGHT
+        Draw what is not cached of the plain picture and the lobby's (the
+        gaming workspace waiting for a game), each then found under a fixed
+        name: plain-OUTPUT-WxH.png, lobby-OUTPUT-WxH.png.
+    gaming-mode-art readout OUTPUT WIDTH HEIGHT FILE
+        Draw the picture with the readout given as JSON on stdin,
+        {"since": "16:13", "blocks": [{"kind": "app", "text": "kitty"}, ...]},
+        into FILE (kinds: shell, screen, mirror, terminal, app, vram).
+
+The wallpaper is the one Noctalia shows on OUTPUT (or by default); without
+one, a plain night.
+"""
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tomllib
+
+import numpy as np
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+
+VERSION = 1  # bump to redraw every cached picture
+CACHE = os.path.join(os.environ.get('XDG_CACHE_HOME') or os.path.expanduser('~/.cache'), 'gaming-mode')
+NOCTALIA = os.path.join(os.environ.get('XDG_STATE_HOME') or os.path.expanduser('~/.local/state'),
+                        'noctalia', 'settings.toml')
+
+# Bayer 8x8 thresholds, centred on zero.
+BAYER = np.array([[0, 32, 8, 40, 2, 34, 10, 42], [48, 16, 56, 24, 50, 18, 58, 26],
+                  [12, 44, 4, 36, 14, 46, 6, 38], [60, 28, 52, 20, 62, 30, 54, 22],
+                  [3, 35, 11, 43, 1, 33, 9, 41], [51, 19, 59, 27, 49, 17, 57, 25],
+                  [15, 47, 7, 39, 13, 45, 5, 37], [63, 31, 55, 23, 61, 29, 53, 21]], np.float32) / 64 - 0.5
+
+TEXT = (205, 214, 244)     # Catppuccin text
+SUBTEXT = (166, 173, 200)  # Catppuccin subtext0
+LAVENDER = (180, 190, 254) # the light when the wallpaper has none
+ICONS = {'shell': '', 'screen': '\U000f0d90', 'mirror': '\U000f037a', 'terminal': '\U000f018d', 'app': '\U000f0717', 'vram': '\U000f08ae'}
+NOUNS = {'shell': 'shells', 'screen': 'screens', 'terminal': 'terminals', 'app': 'apps'}
+
+
+def wallpaper(output):
+    try:
+        with open(NOCTALIA, 'rb') as f:
+            walls = tomllib.load(f).get('wallpaper', {})
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    for key in (output, 'default', 'last'):
+        path = walls.get(key, {}).get('path') if isinstance(walls.get(key), dict) else None
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
+def font(size, bold=False, propo=False):
+    name = 'FantasqueSansM Nerd Font' + (' Propo' if propo else '') + (':bold' if bold else ':regular')
+    try:
+        path = subprocess.run(['fc-match', '-f', '%{file}', name], capture_output=True, text=True, timeout=5).stdout
+        return ImageFont.truetype(path, size)
+    except (OSError, subprocess.SubprocessError):
+        return ImageFont.load_default(size)
+
+
+def cover(im, w, h):
+    s = max(w / im.width, h / im.height)
+    im = im.resize((max(w, round(im.width * s)), max(h, round(im.height * s))), Image.LANCZOS)
+    left, top = (im.width - w) // 2, (im.height - h) // 2
+    return im.crop((left, top, left + w, top + h))
+
+
+def hsv_to_rgb(h, s, v):
+    i = int(h * 6) % 6
+    f = h * 6 - int(h * 6)
+    p, q, t = v * (1 - s), v * (1 - f * s), v * (1 - (1 - f) * s)
+    return [(v, t, p), (q, v, p), (p, v, t), (p, q, v), (t, p, v), (v, p, q)][i]
+
+
+def art(path, w, h):
+    """The wallpaper with the lights out, and the colour of the light left on."""
+    cell = max(2, round(3 * h / 1080))
+    gw, gh = max(1, w // cell), max(1, h // cell)
+    try:
+        small = cover(Image.open(path).convert('RGB'), gw * 4, gh * 4).resize((gw, gh), Image.BOX)
+    except (OSError, ValueError, TypeError, AttributeError):
+        small = None
+    if small is None:  # a plain night: a dark blue sky, lighter towards the horizon
+        sky = np.linspace(0.05, 0.22, gh, dtype=np.float32)[:, None, None] * np.array([0.55, 0.62, 1.0], np.float32)
+        small = Image.fromarray((np.broadcast_to(sky, (gh, gw, 3)) * 255).astype(np.uint8))
+    rgb = np.asarray(small, np.float32) / 255
+    hsv = np.asarray(small.convert('HSV'), np.float32) / 255
+    hue, sat, val = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    y = rgb @ np.array([0.2126, 0.7152, 0.0722], np.float32)
+
+    # The night's hue: the saturation-weighted circular mean over the darker half.
+    dark = y <= np.median(y)
+    wgt = (sat * dark).ravel() + 1e-6
+    ang = hue.ravel() * 2 * np.pi
+    night = (np.arctan2((np.sin(ang) * wgt).sum(), (np.cos(ang) * wgt).sum()) / (2 * np.pi)) % 1
+    levels = 5
+    ramp = np.array([hsv_to_rgb(night, 0.55, v) for v in np.linspace(0.035, 0.30, levels)], np.float32)
+
+    # The luminance, darkened, in an ordered dither over the ramp.
+    tone = np.clip(y, 0, 1) ** 1.2
+    thr = np.tile(BAYER, (gh // 8 + 1, gw // 8 + 1))[:gh, :gw]
+    out = ramp[np.clip(np.floor(tone * (levels - 1) + 0.5 + thr), 0, levels - 1).astype(int)]
+
+    # The lights stay on: warm, bright, saturated cells keep their colour, or
+    # failing those the most vivid ones, if anything is vivid at all.
+    deg = hue * 360
+    lit = ((deg < 70) | (deg > 330)) & (sat > 0.35) & (val > 0.45)
+    if lit.mean() < 0.0005:
+        score = val * sat
+        lit = (score >= np.quantile(score, 0.997)) & (score > 0.25)
+    out[lit] = np.clip(rgb[lit] * 1.08, 0, 1)
+    if lit.any():
+        light = rgb[lit].mean(0)
+        light = tuple(int(c * 255) for c in light / max(light.max(), 1e-6))
+    else:
+        light = LAVENDER
+
+    # Cells drawn crisp at full size; the glow and the vignette are smooth, so
+    # they are worked out per cell and stretched.
+    img = Image.fromarray((out * 255).astype(np.uint8)).resize((w, h), Image.NEAREST)
+    if lit.any():
+        mask = Image.fromarray((lit * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(14))
+        glow = np.asarray(mask, np.float32)[..., None] / 255 * (np.array(light, np.float32) / 255) * 0.55
+        img = ImageChops.screen(img, Image.fromarray((glow * 255).astype(np.uint8)).resize((w, h), Image.BILINEAR))
+    yy, xx = np.mgrid[0:gh, 0:gw].astype(np.float32)
+    r2 = ((xx - gw / 2) / (gw / 2)) ** 2 + ((yy - gh / 2) / (gh / 2)) ** 2
+    vig = Image.fromarray(((1 - 0.35 * np.clip(r2 / 2, 0, 1)) * 255).astype(np.uint8)).resize((w, h), Image.BILINEAR)
+    return ImageChops.multiply(img, vig.convert('RGB')), light
+
+
+def collapse(blocks, fits):
+    """Blocks one per thing while they fit; otherwise the kind with the most
+    blocks becomes one block that counts them, until they fit."""
+    blocks = [dict(b) for b in blocks]
+    while not fits(blocks):
+        kinds = {}
+        for b in blocks:
+            if b['kind'] in NOUNS:
+                kinds.setdefault(b['kind'], []).append(b)
+        many = max(kinds.values(), key=len, default=[])
+        if len(many) < 2:
+            if len(blocks) <= 1:
+                break
+            blocks.pop(-2 if blocks[-1]['kind'] == 'vram' else -1)  # the row ends where it must
+            continue
+        first = blocks.index(many[0])
+        count = sum(b.get('count', 1) for b in many)
+        blocks = [b for b in blocks if b not in many]
+        blocks.insert(first, {'kind': many[0]['kind'], 'text': f'{count} {NOUNS[many[0]["kind"]]}'})
+    return blocks
+
+
+def compose(base, light, sub, blocks):
+    w, h = base.size
+    s = h / 1080
+    img = base.convert('RGBA')
+    over = Image.new('RGBA', img.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(over)
+    x0, y = round(88 * s), h - round(96 * s)
+    stroke = max(1, round(s))
+
+    # The readout: a row of i3bar-style blocks, 1px borders in the light.
+    if blocks:
+        fb = font(round(21 * s), propo=True)
+        bh, pad, gap = round(38 * s), round(14 * s), round(10 * s)
+
+        def label(b):
+            return f'{ICONS.get(b["kind"], "")}  {b["text"]}'
+
+        def width(b):
+            return round(d.textlength(label(b), font=fb) + 2 * pad)
+
+        def fits(bs):
+            return sum(width(b) for b in bs) + gap * (len(bs) - 1) <= w - 2 * x0
+
+        x = x0
+        for b in collapse(blocks, fits):
+            bw = width(b)
+            d.rectangle([x, y - bh, x + bw, y], fill=(10, 11, 20, 170), outline=light + (200,), width=stroke)
+            d.text((x + pad, y - bh / 2), label(b), font=fb, fill=TEXT + (235,), anchor='lm')
+            x += bw + gap
+        y -= bh + round(26 * s)
+
+    d.text((x0, y), sub, font=font(round(26 * s)), fill=SUBTEXT + (220,), anchor='ls')
+    y -= round(40 * s)
+    ft = font(round(92 * s), bold=True)
+    word = 'gaming mode'
+    d.text((x0 - 4 * s, y), word, font=ft, fill=light + (255,), anchor='ls')
+    cx = x0 + d.textlength(word, font=ft) + 14 * s  # a block cursor in the same light
+    d.rectangle([cx, y - ft.getmetrics()[0] * 0.62, cx + 26 * s, y], fill=light + (255,))
+    return Image.alpha_composite(img, over).convert('RGB')
+
+
+def safe(name):
+    return ''.join(c if c.isalnum() or c in '-_.' else '_' for c in name)
+
+
+def save(img, path):
+    tmp = f'{path}.{os.getpid()}.tmp'
+    img.save(tmp, 'PNG', compress_level=3)
+    os.replace(tmp, path)
+
+
+def cached_art(output, w, h):
+    """(art, light, key): the art for OUTPUT's wallpaper at w x h, cached on
+    disk by wallpaper, its modification time and the size."""
+    path = wallpaper(output)
+    try:
+        mtime = os.stat(path).st_mtime_ns if path else 0
+    except OSError:
+        mtime = 0
+    key = hashlib.sha1(f'{VERSION}\0{path}\0{mtime}\0{w}x{h}'.encode()).hexdigest()[:16]
+    os.makedirs(CACHE, exist_ok=True)
+    file, meta = os.path.join(CACHE, f'art-{key}.png'), os.path.join(CACHE, f'art-{key}.json')
+    try:
+        with open(meta) as f:
+            light = tuple(json.load(f)['light'])
+        return Image.open(file).convert('RGB'), light, key
+    except (OSError, ValueError, KeyError):
+        pass
+    img, light = art(path, w, h)
+    save(img, file)
+    with open(meta + '.tmp', 'w') as f:
+        json.dump({'light': light, 'wallpaper': path}, f)
+    os.replace(meta + '.tmp', meta)
+    prune()
+    return img, light, key
+
+
+def prune(keep=16):
+    """Keep the newest pictures only (a wallpaper and size makes four files),
+    and the links to them."""
+    try:
+        paths = [os.path.join(CACHE, f) for f in os.listdir(CACHE)]
+        files = sorted((p for p in paths if not os.path.islink(p)), key=os.path.getmtime, reverse=True)
+    except OSError:
+        return
+    for f in files[keep:] + [p for p in paths if os.path.islink(p) and not os.path.exists(p)]:
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+
+
+def main(argv):
+    if len(argv) < 5 or argv[1] not in ('plain', 'prepare', 'readout') or (argv[1] == 'readout') != (len(argv) == 6):
+        print(__doc__.split('\n\n')[2], file=sys.stderr)
+        return 2
+    output, w, h = argv[2], int(argv[3]), int(argv[4])
+    if not (16 <= w <= 16384 and 16 <= h <= 16384):
+        print('gaming-mode-art: size out of range', file=sys.stderr)
+        return 2
+    base, light, key = cached_art(output, w, h)
+    if argv[1] in ('plain', 'prepare'):
+        kinds = [('plain', 'the desktop is asleep')]
+        if argv[1] == 'prepare':
+            kinds.append(('lobby', 'waiting for a game  ·  the desktop sleeps once one opens'))
+        for kind, sub in kinds:
+            file = os.path.join(CACHE, f'{kind}-{key}.png')
+            if not os.path.exists(file):
+                save(compose(base, light, sub, []), file)
+            # The latest for this output and size under a fixed name, for
+            # gaming-mode to find without asking (or drawing) when it has to be quick.
+            link = os.path.join(CACHE, f'{kind}-{safe(output)}-{w}x{h}.png')
+            tmp = f'{link}.{os.getpid()}.tmp'
+            os.symlink(os.path.basename(file), tmp)
+            os.replace(tmp, link)
+            if argv[1] == 'plain':
+                print(link)
+        return 0
+    readout = json.load(sys.stdin)
+    sub = 'the desktop is asleep' + (f'  ·  since {readout["since"]}' if readout.get('since') else '')
+    blocks = [{'kind': str(b.get('kind', '')), 'text': str(b.get('text', ''))[:48]} for b in readout.get('blocks', [])]
+    save(compose(base, light, sub, blocks), argv[5])
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

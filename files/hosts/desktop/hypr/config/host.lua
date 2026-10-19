@@ -25,6 +25,14 @@ end
 MODE = recorded_mode() or MODE
 
 hl.bind("SUPER + SHIFT + M", hl.dsp.exec_cmd("~/.local/bin/display-mode toggle"))
+-- Disconnect the TV (Hyprland frees what it held for it), or connect it
+-- again; also the bar's TV block. Works in a game, where the bar sleeps.
+hl.bind("SUPER + ALT + M", hl.dsp.exec_cmd("~/.local/bin/display-mode link"))
+
+-- Games play on the monitor: the TV shows them by mirroring it, which gaming
+-- mode switches to (files/bin/gaming-mode). Extended during a stay is fine,
+-- but the gaming workspace stays here.
+hl.workspace_rule({ workspace = "name:gaming", monitor = "HDMI-A-1" })
 
 hl.monitor({
     output   = "HDMI-A-1",

@@ -136,6 +136,16 @@ hl.window_rule({
     no_focus = true,
 })
 
+-- Gaming mode's backdrop (swaybg, the only "wallpaper" here) and review panel
+-- close without a fade: a fade is a screen-sized snapshot, taken as a game
+-- starts. The panel's own blur.
+hl.layer_rule({ name = "gaming-mode", match = { namespace = "^(wallpaper|gaming-mode-.+)$" }, no_anim = true })
+hl.layer_rule({ name = "gaming-mode-panel", match = { namespace = "^gaming-mode-panel$" }, blur = true, ignore_alpha = 0.3 })
+
+-- Flameshot's capture overlay (a layer surface in the fork) appears and goes
+-- at once: a fade would show the frozen image over the live screen.
+hl.layer_rule({ name = "flameshot", match = { namespace = "^flameshot$" }, no_anim = true })
+
 -- Noctalia layer rule
 hl.layer_rule({
     name = "noctalia",

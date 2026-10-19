@@ -5,17 +5,39 @@
 #
 #   display-mode [toggle]       switch to the other layout
 #   display-mode mirror|extended
-#   display-mode status         print the layout in effect
+#   display-mode off            disconnect the TV: Hyprland drops it and frees
+#                               what it held for it (about 190 MiB of VRAM at
+#                               4K); it stays off until `display-mode on`
+#   display-mode on             connect it again, in the layout recorded
+#   display-mode link           off while it is on, on while it is off
+#   display-mode record mirror|extended
+#                               while it is off or unplugged: the layout it
+#                               comes back in, printing the one recorded
+#                               before (exits 3, changing nothing, while it
+#                               is shown)
+#   display-mode status         print the layout in effect: mirror, extended,
+#                               off (disconnected here) or none (nothing
+#                               attached)
 #
 # The layouts live in host.lua, a read-only store file, so this records the
 # wanted mode in $XDG_RUNTIME_DIR/display-mode and runs hypr-display-reload,
 # whose reload makes host.lua read it back. The file goes away at logout: a new
-# session starts in host.lua's own default.
+# session starts in host.lua's own default. Disconnecting goes through the
+# root helper gaming mode uses (system/libexec/gaming-mode-display: only a
+# gone connector makes Hyprland free its buffers), and is recorded in
+# $XDG_RUNTIME_DIR/display-link until connected again (Super+Alt+M). Gaming
+# mode mirrors through this (files/bin/gaming-mode); the bar's TV block and
+# the gaming-mode panel click it.
 set -Eeuo pipefail
 
 FILE="${DISPLAY_MODE_FILE:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/display-mode}"
+LINK="${DISPLAY_MODE_LINK:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/display-link}"
 RELOAD="${DISPLAY_MODE_RELOAD:-$HOME/.local/bin/hypr-display-reload}"
+HELPER="${DISPLAY_MODE_HELPER:-/usr/local/libexec/gaming-mode-display}"
+SYS="${DISPLAY_MODE_SYS:-/sys}"
 TRIES="${DISPLAY_MODE_TRIES:-30}" # 0.1 s each, for the layout to show up
+BIG=HDMI-A-2                      # the TV, as host.lua and hypr-display-reload name it
+DEFAULT=extended                  # host.lua's MODE: the layout with nothing recorded
 
 die() {
     printf 'display-mode: %s\n' "$*" >&2
@@ -30,8 +52,47 @@ notify() {
 # reports its source in mirrorOf. Only "monitors all" lists it; plain
 # "monitors" leaves a mirroring monitor out, which hides mirror mode entirely.
 current() {
-    hyprctl -j monitors all |
-        jq -r 'if any(.[]; (.mirrorOf // "none") != "none") then "mirror" else "extended" end'
+    if [[ "$(cat "$LINK" 2>/dev/null)" == off ]]; then
+        echo off
+        return
+    fi
+    hyprctl -j monitors all | jq -r --arg big "$BIG" '
+        if any(.[]; .name == $big) | not then "none"
+        elif any(.[]; (.mirrorOf // "none") != "none") then "mirror"
+        else "extended" end'
+}
+
+# The TV's DRM connector (card1-HDMI-A-2): exactly one.
+connector() {
+    local -a found=("$SYS"/class/drm/card*-"$BIG")
+    ((${#found[@]} == 1)) && [[ -e "${found[0]}/status" ]] || return 1
+    printf '%s\n' "${found[0]##*/}"
+}
+
+link_off() {
+    local c
+    c="$(connector)" || die "no single connector for $BIG"
+    printf 'off\n' >"$LINK"
+    if ! sudo -n "$HELPER" off "$c"; then
+        rm -f "$LINK"
+        notify "Could not disconnect the TV"
+        die "$HELPER off $c failed (is /etc/sudoers.d/gaming-mode installed?)"
+    fi
+    notify "TV disconnected"
+}
+
+# Back to hotplug detection: Hyprland adds the TV again and host.lua lays it
+# out as recorded. One that reports nothing attached is as connected as it can be.
+link_on() {
+    local c
+    c="$(connector)" || die "no single connector for $BIG"
+    sudo -n "$HELPER" detect "$c" || { notify "Could not connect the TV"; die "$HELPER detect $c failed"; }
+    rm -f "$LINK"
+    for ((i = 0; i < TRIES; i++)); do
+        [[ "$(current)" != none || "$(cat "$SYS/class/drm/$c/status" 2>/dev/null)" == disconnected ]] && break
+        sleep 0.1
+    done
+    notify "TV connected"
 }
 
 action="${1:-toggle}"
@@ -40,16 +101,44 @@ status)
     current
     exit 0
     ;;
-toggle | mirror | extended) ;;
-*) die "usage: display-mode [toggle | mirror | extended | status]" ;;
+toggle | mirror | extended | off | on | link) ;;
+record) [[ "${2:-}" == mirror || "${2:-}" == extended ]] || die "usage: display-mode record mirror|extended" ;;
+*) die "usage: display-mode [toggle | mirror | extended | off | on | link | record LAYOUT | status]" ;;
 esac
 
-# One switch at a time: a second press while the first one reloads does nothing.
+# One switch at a time: a second press while the first one reloads does
+# nothing. (A record, from gaming mode, waits its turn instead.)
 mkdir -p "${FILE%/*}"
 exec 9>"$FILE.lock"
-flock -n 9 || exit 0
+if [[ "$action" == record ]]; then
+    flock -w 10 9 || die "another switch is still running"
+else
+    flock -n 9 || exit 0
+fi
 
 now="$(current)"
+case "$action" in
+record)
+    [[ "$now" == off || "$now" == none ]] || exit 3
+    before="$(cat "$FILE" 2>/dev/null || true)"
+    [[ "$before" == mirror || "$before" == extended ]] || before="$DEFAULT"
+    printf '%s\n' "$2" >"$FILE"
+    printf '%s\n' "$before"
+    exit 0
+    ;;
+off) [[ "$now" == off ]] || link_off; exit 0 ;;
+on) [[ "$now" != off ]] || link_on; exit 0 ;;
+link)
+    if [[ "$now" == off ]]; then link_on; else link_off; fi
+    exit 0
+    ;;
+esac
+# A layout needs the TV: connect it first.
+if [[ "$now" == off ]]; then
+    link_on
+    now="$(current)"
+fi
+[[ "$now" != none ]] || { notify "No TV attached"; die "no $BIG attached"; }
 want="$action"
 if [[ "$action" == toggle ]]; then
     want=mirror

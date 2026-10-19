@@ -1,7 +1,7 @@
 # Current CachyOS workstation
 
 This branch tracks the configuration actually used on the machine: CachyOS
-Hyprland with Noctalia, Kitty launching Herdr, Swash screenshots, Emacs,
+Hyprland with Noctalia, Kitty launching Herdr, Flameshot screenshots, Emacs,
 Neovim, and shell startup. Credentials, logs, sessions, caches, backups, and
 other mutable state stay in the home directory.
 
@@ -70,6 +70,17 @@ links break it.
   number, so the workspace keys and the bar skip it: Super+G goes there and,
   pressed again, back to where you were; Super+Shift+G sends the focused
   window there, or back.
+- **Gaming mode:** while the gaming workspace is on screen with a window on
+  it, `gaming-mode` leaves the game everything: it stops the shell (bar,
+  wallpaper), closes terminals whose sessions live on in a session server
+  (herdr, tmux, zellij, screen), disconnects the other screens (not one
+  mirroring the game's, nor one playing its sound), and freezes
+  every other app, pushing its memory to swap; leaving the workspace puts it
+  all back, terminals reattached on their own workspaces, silently. Nothing is
+  named: the game is whatever owns the workspace's windows, with what started
+  it and what it talks to. `gaming-mode status` lists what is stopped and
+  `gaming-mode report` what still uses CPU or VRAM. Disconnecting screens
+  needs the `system/` part (`install.sh --system`).
 - **Emacs:** runs as a daemon from login (`modules/editors.nix` enables the
   pacman unit), so Super+E opens a frame at once instead of cold-starting
   Emacs. `systemctl --user restart emacs` reloads `init.el`.
@@ -90,6 +101,7 @@ links break it.
 ./tests/bash-startup.sh
 ./tests/hypr-reload.sh
 ./tests/display-mode.sh
+./tests/gaming-mode.sh
 ./tests/launcher-curate.sh
 ./tests/scratch-world.sh
 ./tests/emacs-state.sh

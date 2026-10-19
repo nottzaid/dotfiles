@@ -118,8 +118,11 @@ hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd(noctCall .. "brightness-down"),
 
 -- Screen Capture
 hl.bind(mainMod .. " + P",     hl.dsp.exec_cmd("hyprpicker -a -n"))
-hl.bind("Print",               hl.dsp.exec_cmd(noctCall .. "screenshot-region"))
-hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd(noctCall .. "screenshot-fullscreen"))
+-- Flameshot (the nottzaid/flameshot fork, packages/pkgbuild): select and
+-- annotate on a frozen overlay of the focused monitor; Super+Print copies the
+-- whole focused monitor straight to the clipboard.
+hl.bind("Print",               hl.dsp.exec_cmd("flameshot gui"))
+hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd("flameshot screen --clipboard"))
 
 -- Theming and Wallpaper
 hl.bind(mainMod .. " + SHIFT + W", hl.dsp.exec_cmd(noctCall .. "panel-toggle wallpaper"))
@@ -191,13 +194,22 @@ local function focusWorkspace(selector)
     end
 end
 
+-- Show the gaming workspace, remembering where Super+G goes back to. Global:
+-- gaming mode's review panel goes back to the game through it.
+function GamingWorkspaceShow()
+    local shown = shownWorkspace()
+    if not (shown and shown.name == "gaming") then
+        gamingHome = shown and selectorOf(shown) or nil
+        focusWorkspace(gamingWorkspace)
+    end
+end
+
 hl.bind(mainMod .. " + G", function()
     local shown = shownWorkspace()
     if shown and shown.name == "gaming" then
         focusWorkspace(gamingHome or "previous")
     else
-        gamingHome = shown and selectorOf(shown) or nil
-        focusWorkspace(gamingWorkspace)
+        GamingWorkspaceShow()
     end
 end)
 
