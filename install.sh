@@ -104,11 +104,35 @@ install_aur_manifest() {
     paru -S --needed "${missing[@]}"
 }
 
+# Forks with fixes, built from the PKGBUILDs under packages/pkgbuild/<name>/
+# and then owned by pacman. Rebuilt when the PKGBUILD's version differs from
+# the installed one.
+install_local_pkgbuilds() {
+    local dir name wanted installed build
+    [[ "${DOTFILES_SKIP_PACKAGE_INSTALL:-0}" != 1 ]] || return 0
+    for dir in "$ROOT"/packages/pkgbuild/*/; do
+        [[ -f "$dir/PKGBUILD" ]] || continue
+        name="$(basename -- "$dir")"
+        # shellcheck disable=SC1091,SC2154 # pkgver and pkgrel come from the PKGBUILD
+        wanted="$(source "$dir/PKGBUILD" && printf '%s-%s' "$pkgver" "$pkgrel")"
+        installed="$(pacman -Q "$name" 2>/dev/null | cut -d' ' -f2)"
+        if [[ "$installed" == "$wanted" ]]; then
+            note "package already built: $name $wanted"
+            continue
+        fi
+        build="$(mktemp -d)"
+        cp -- "$dir/PKGBUILD" "$build/"
+        (cd "$build" && makepkg --syncdeps --install --clean --noconfirm)
+        rm -rf -- "$build"
+    done
+}
+
 git -C "$ROOT" submodule update --init --recursive
 
 if ((INSTALL_PACKAGES)); then
     install_pacman_manifest "$ROOT/packages/desktop.txt"
     install_aur_manifest "$ROOT/packages/aur.txt"
+    install_local_pkgbuilds
 fi
 if ((INSTALL_STREAMING)); then
     install_pacman_manifest "$ROOT/packages/streaming.txt"
