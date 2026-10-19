@@ -1,4 +1,4 @@
-# Hyprland/kitty/noctalia/swash/herdr/uwsm: config text only.
+# Hyprland/kitty/noctalia/swash/flameshot/herdr/uwsm: config text only.
 # Binaries + GPU + drivers stay with pacman/CachyOS — do NOT enable
 # wayland.windowManager.hyprland here (nothing to generate; raw files win).
 #
@@ -99,6 +99,12 @@ in
   home.activation.seedSwashSettings = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     if [ ! -e "$HOME/.config/swash/settings.ini" ]; then
       run install -Dm644 ${../files/swash.ini} "$HOME/.config/swash/settings.ini"
+    fi
+  '';
+  # Flameshot also writes its own settings (its config dialog); seed them once.
+  home.activation.seedFlameshotSettings = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    if [ ! -e "$HOME/.config/flameshot/flameshot.ini" ]; then
+      run install -Dm644 ${../files/flameshot.ini} "$HOME/.config/flameshot/flameshot.ini"
     fi
   '';
   home.sessionVariables.BROWSER = "firefox";

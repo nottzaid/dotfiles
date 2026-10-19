@@ -1,7 +1,7 @@
 # Current CachyOS workstation
 
 This branch tracks the configuration actually used on the machine: CachyOS
-Hyprland with Noctalia, Kitty launching Herdr, Swash screenshots, Emacs,
+Hyprland with Noctalia, Kitty launching Herdr, Flameshot screenshots, Emacs,
 Neovim, and shell startup. Credentials, logs, sessions, caches, backups, and
 other mutable state stay in the home directory.
 
