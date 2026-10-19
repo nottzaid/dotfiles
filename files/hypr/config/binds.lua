@@ -191,13 +191,22 @@ local function focusWorkspace(selector)
     end
 end
 
+-- Show the gaming workspace, remembering where Super+G goes back to. Global:
+-- gaming mode's review panel goes back to the game through it.
+function GamingWorkspaceShow()
+    local shown = shownWorkspace()
+    if not (shown and shown.name == "gaming") then
+        gamingHome = shown and selectorOf(shown) or nil
+        focusWorkspace(gamingWorkspace)
+    end
+end
+
 hl.bind(mainMod .. " + G", function()
     local shown = shownWorkspace()
     if shown and shown.name == "gaming" then
         focusWorkspace(gamingHome or "previous")
     else
-        gamingHome = shown and selectorOf(shown) or nil
-        focusWorkspace(gamingWorkspace)
+        GamingWorkspaceShow()
     end
 end)
 

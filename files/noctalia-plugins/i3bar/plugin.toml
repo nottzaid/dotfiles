@@ -2,7 +2,7 @@
 # separators. Colors and geometry follow i3's defaults (i3/i3bar/src/xcb.c).
 id = "zaid/i3bar"
 name = "i3bar"
-version = "1.0.1"
+version = "1.1.0"
 plugin_api = 9
 author = "zaid"
 license = "MIT"
@@ -39,3 +39,16 @@ key = "interactive"
 type = "bool"
 label_key = "Interactive"
 default = false
+
+# The TV's link (display-mode): mirror, extended, off or none. Click
+# disconnects it or connects it again; right click mirrors or extends.
+[[widget]]
+id = "screen"
+entry = "screen.luau"
+
+[[widget.setting]]
+key = "color"
+type = "color"
+label_key = "Widget hover tint"
+default = "#00000000"
+advanced = true
