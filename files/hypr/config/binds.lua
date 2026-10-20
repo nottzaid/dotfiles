@@ -120,8 +120,10 @@ hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd(noctCall .. "brightness-down"),
 hl.bind(mainMod .. " + P",     hl.dsp.exec_cmd("hyprpicker -a -n"))
 -- Flameshot (the nottzaid/flameshot fork, packages/pkgbuild): select and
 -- annotate on a frozen overlay of the focused monitor; Super+Print copies the
--- whole focused monitor straight to the clipboard.
-hl.bind("Print",               hl.dsp.exec_cmd("flameshot gui"))
+-- whole focused monitor straight to the clipboard. Print asks the running
+-- daemon over D-Bus (starting it if need be): `flameshot gui` would boot a
+-- whole new Qt app first, about 0.1 s before anything shows.
+hl.bind("Print",               hl.dsp.exec_cmd("dbus-send --session --type=method_call --dest=org.flameshot.Flameshot / org.flameshot.Flameshot.captureScreen"))
 hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd("flameshot screen --clipboard"))
 
 -- Theming and Wallpaper

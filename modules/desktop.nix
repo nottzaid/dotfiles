@@ -101,6 +101,29 @@ in
       run install -Dm644 ${../files/swash.ini} "$HOME/.config/swash/settings.ini"
     fi
   '';
+  # The Flameshot daemon runs for the whole session, so Print never waits for
+  # it to start (about half a second): up with the session, back up if it
+  # dies, and the unit D-Bus activation goes through, so there is only one.
+  systemd.user.services.flameshot = {
+    Unit = {
+      Description = "Flameshot screenshot daemon";
+      PartOf = [ "graphical-session.target" ];
+      After = [ "graphical-session.target" ];
+    };
+    Service = {
+      Type = "dbus";
+      BusName = "org.flameshot.Flameshot";
+      ExecStart = "/usr/bin/flameshot";
+      Restart = "on-failure";
+    };
+    Install.WantedBy = [ "graphical-session.target" ];
+  };
+  xdg.dataFile."dbus-1/services/org.flameshot.Flameshot.service".text = ''
+    [D-BUS Service]
+    Name=org.flameshot.Flameshot
+    Exec=/usr/bin/flameshot
+    SystemdService=flameshot.service
+  '';
   # Flameshot also writes its own settings (its config dialog); seed them once.
   home.activation.seedFlameshotSettings = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     if [ ! -e "$HOME/.config/flameshot/flameshot.ini" ]; then

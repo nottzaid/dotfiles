@@ -1,18 +1,20 @@
 # Flameshot from nottzaid/flameshot (branch hyprland-layer-shell): the capture
 # overlay is a layer-shell surface, so it no longer takes a workspace's
-# fullscreen slot and knocks maximized or fullscreen windows out of it.
+# fullscreen slot and knocks maximized or fullscreen windows out of it, and
+# only the focused monitor is copied, straight from the compositor, so the
+# overlay is up in under 0.1 s.
 # Built from Arch's flameshot PKGBUILD; install.sh builds it with makepkg.
 
 pkgname=flameshot-hyprland
-_commit=1b1cd912f89a62afe6eee46748bf724ab0992b5a
-pkgver=14.0.0.r1.g1b1cd91
+_commit=52105638b1731ddee2e445dbd43d2a8b122ae958
+pkgver=14.0.0.r2.g5210563
 pkgrel=1
 pkgdesc="Powerful yet simple to use screenshot software (layer-shell overlay for Hyprland)"
 url="https://github.com/nottzaid/flameshot"
 arch=('x86_64')
 license=('GPL-3.0-or-later')
 depends=('qt6-svg' 'hicolor-icon-theme' 'kguiaddons' 'layer-shell-qt' 'wayland' 'grim')
-makedepends=('qt6-tools' 'cmake' 'git')
+makedepends=('qt6-tools' 'cmake' 'git' 'wayland-protocols')
 optdepends=('xdg-desktop-portal: screenshots outside Hyprland'
             'qt6-imageformats: for additional export image formats (e.g. tiff, webp, and more)')
 provides=('flameshot')
@@ -26,6 +28,7 @@ build() {
 		-DCMAKE_INSTALL_PREFIX=/usr \
 		-DUSE_WAYLAND_CLIPBOARD=ON \
 		-DUSE_LAYER_SHELL=ON \
+		-DUSE_IMAGE_COPY_CAPTURE=ON \
 		-DDISABLE_UPDATE_CHECKER=ON \
 		-DUSE_KDSINGLEAPPLICATION=OFF \
 		-Wno-dev
