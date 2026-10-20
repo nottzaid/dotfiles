@@ -45,6 +45,5 @@ just
 mise
 rtkit
 typst
-zed
 zig
 ttf-fantasque-nerd

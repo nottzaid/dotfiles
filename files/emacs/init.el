@@ -69,9 +69,8 @@
 
 ;; The daemon starts with a short PATH. Let Emacs and its subprocesses find
 ;; tools installed per user: Rust tools from rustup, and the coding agents that
-;; aside drives (OpenCode, Cline, and the Claude Code and Codex ACP adapters).
-(dolist (dir '("~/.cargo/bin" "~/.local/bin" "~/.opencode/bin"
-               "~/.local/share/pnpm/bin"))
+;; aside drives (OpenCode, and the Claude Code and Codex ACP adapters).
+(dolist (dir '("~/.cargo/bin" "~/.local/bin" "~/.opencode/bin"))
   (let ((dir (expand-file-name dir)))
     (add-to-list 'exec-path dir)
     (setenv "PATH" (concat dir path-separator (getenv "PATH")))))
@@ -333,7 +332,7 @@
 (use-package magit
   :ensure t)
 
-;; aside: a popup for coding agents (OpenCode, Claude Code, Codex, Cline).
+;; aside: a popup for coding agents (OpenCode, Claude Code, Codex).
 ;; Update with M-x package-vc-upgrade RET aside.
 (use-package aside
   :vc (:url "https://github.com/nottzaid/aside" :rev :newest)
