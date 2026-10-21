@@ -40,7 +40,33 @@
 #   apps           every other unit in the user's app.slice: frozen (cgroup
 #                  freezer: no CPU, no redraws) and their memory pushed out to
 #                  swap. Their VRAM stays theirs; closing is the only way back.
+#   cold swap      compressed swap (zram) is still RAM: what sits untouched in
+#                  it (frozen apps' memory, the cold part of the game's) goes
+#                  on to the disk behind it every WRITEBACK_LATER seconds of a
+#                  stay, where it has one (system/libexec/zram-writeback),
+#                  and comes back from there when read.
+#   Steam's UI     the one thing named: steamwebhelper, the browser Steam
+#                  draws its windows with (most of what Steam holds, 700 MiB
+#                  or more), when the Steam behind it is part of the game
+#                  (Steam started the game, which calls it) and the browser
+#                  is not. Ended, the sandbox between it and Steam
+#                  (srt-bwrap, pv-adverb) stopped first: Steam, which starts
+#                  another within seconds of one ending, never learns it did.
+#                  After, the sandbox goes on, finds it gone and exits, Steam
+#                  starts a fresh one, and its main window and friends list,
+#                  if they were open, open again where they were, silently.
+#                  Steam itself keeps running.
 # If finding the game, its sockets or the services fails, nothing changes.
+#
+# Leaving while the game's windows are still up is a visit to the desktop:
+# everything comes back but the screens' layout (switching it reloads the
+# compositor's config and blanks the screens, both ways) and Steam's UI,
+# which comes back once the visit has lasted STEAM_LATER seconds; both go
+# back as they were once the game's windows are gone, and the review panel
+# shows then (or after a visit that did not restore everything). Work done
+# with the game on screen runs at a lower priority than the game, and a
+# frozen app goes to swap only once it has been frozen RECLAIM_LATER seconds,
+# so a quick return to the desktop finds it still in memory.
 #
 #   gaming-mode sync      follow the gaming workspace (what gaming.lua runs)
 #   gaming-mode on|off    force it, e.g. for a game kept off screen; sync
@@ -72,6 +98,7 @@ STATE_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/gaming-mode"
 USER_CG="/user.slice/user-$(id -u).slice/user@$(id -u).service"
 APPS="/sys/fs/cgroup$USER_CG/app.slice"
 DISPLAY_HELPER=/usr/local/libexec/gaming-mode-display
+WRITEBACK_HELPER=/usr/local/libexec/zram-writeback
 SYS=/sys # sysfs (tests point it elsewhere)
 GAMING_WS=gaming
 SELF=$(readlink -f "$0")
@@ -90,7 +117,9 @@ SHELLS=$STATE_DIR/shell        # one directory per stopped shell process
 TERMS=$STATE_DIR/terms         # one directory per closed terminal
 DISPLAYS=$STATE_DIR/displays   # disconnected connectors, one per line
 FROZEN=$STATE_DIR/frozen       # cgroups this script froze, one per line
-LEFT=$STATE_DIR/left           # a leave has run since enter (with ON: it is incomplete)
+STEAMUI=$STATE_DIR/steam-ui    # Steam's UI ended: parked (pid start), windows (title workspace)
+LEFT=$STATE_DIR/left           # a leave has run since enter (with ON: it is incomplete); its trigger
+VISIT=$STATE_DIR/visit         # a visit to the desktop began then (seconds since boot)
 SESSIONS=$STATE_DIR/sessions   # one directory per stay, its journal in events.jsonl
 SESSION=$STATE_DIR/session     # the name of the current (or last) one
 BACKDROP=$STATE_DIR/backdrop   # the backdrop's unit, output and picture, one line
@@ -99,6 +128,9 @@ REVIEW=$STATE_DIR/review       # the review panel is due once no game is on scre
 MIRRORED=$STATE_DIR/mirrored   # this stay switched the screens to mirror
 PANEL_UNIT=gaming-mode-panel.service
 LOG=$STATE_DIR/log
+STEAM_LATER=20                 # seconds into a visit before Steam's UI comes back
+RECLAIM_LATER=30               # seconds into a stay before frozen apps go to swap
+WRITEBACK_LATER=120            # seconds untouched in zram swap before it goes to disk
 ENTER_TRIGGER=workspace        # why enter or leave runs, for the journal
 LEAVE_TRIGGER=left
 
@@ -117,6 +149,12 @@ starttime_of() {
     { read -r s <"/proc/$1/stat"; } 2>/dev/null || return 1
     read -r -a f <<<"${s##*) }"
     echo "${f[19]}"
+}
+state_of() { # state_of PID: R, S, T (stopped), Z (ended)...
+    local s
+    { read -r s <"/proc/$1/stat"; } 2>/dev/null || return 1
+    s=${s##*) }
+    echo "${s%% *}"
 }
 # same_process PID START: that very process, still running (a zombie has
 # ended though it keeps its pid and start time).
@@ -839,12 +877,16 @@ freeze_apps() {
 # it never competes with the game; each cgroup until it is thawed or gives
 # nothing more back.
 reclaim_cold() {
+    local id
+    { read -r id <"$SESSION"; } 2>/dev/null || id=""
     (
         exec 9>&- >/dev/null 2>&1
         chrt --idle -p 0 "$BASHPID" || renice -n 19 -p "$BASHPID"
+        sleep "$RECLAIM_LATER"
+        # (Only for this stay: the app may be thawed and frozen again since.)
         for dir in "$@"; do
-            while [[ $(<"$dir/cgroup.freeze") == 1 ]] && echo 32M >"$dir/memory.reclaim"; do :; done
-        done
+            while [[ $(<"$SESSION") == "$id" && $(<"$dir/cgroup.freeze") == 1 ]] && echo 32M >"$dir/memory.reclaim"; do :; done
+        done 2>/dev/null
     ) &
 }
 
@@ -874,6 +916,248 @@ thaw_apps() {
     done <"$FROZEN"
     write_lines "$FROZEN" "$left"
     return $failed
+}
+
+# --- cold swap ---------------------------------------------------------------
+
+# The zram swap devices with a disk behind them, one name per line.
+zram_backed() {
+    local dev
+    for dev in $(awk '$1 ~ /^\/dev\/zram[0-9]+$/ {print substr($1, 6)}' /proc/swaps); do
+        [[ -e $SYS/block/$dev/backing_dev && $(<"$SYS/block/$dev/backing_dev") != none ]] && echo "$dev"
+    done
+}
+
+# While this stay lasts, in the background at idle CPU and disk priority:
+# every WRITEBACK_LATER seconds, what has sat untouched in zram swap that
+# long goes to the disk behind it (see the top). A quick return to the
+# desktop finds nothing there yet.
+writeback_later() {
+    local id
+    { read -r id <"$SESSION"; } 2>/dev/null && [[ -n $(zram_backed) ]] || return 0
+    (
+        exec 9>&- </dev/null >/dev/null 2>&1
+        chrt --idle -p 0 "$BASHPID" || renice -n 19 -p "$BASHPID"
+        ionice -c 3 -p "$BASHPID"
+        NOTE_DIR=$SESSIONS/$id
+        while sleep "$WRITEBACK_LATER" && [[ -e $ON && ! -e $LEFT && $(<"$SESSION") == "$id" ]]; do
+            for dev in $(zram_backed); do
+                read -r _ _ used _ <"$SYS/block/$dev/mm_stat"
+                read -r _ _ written <"$SYS/block/$dev/bd_stat"
+                if ! sudo -n "$WRITEBACK_HELPER" writeback "$dev" "$WRITEBACK_LATER"; then
+                    note writeback device="$dev" ok:=false
+                    continue
+                fi
+                read -r _ _ now _ <"$SYS/block/$dev/mm_stat"
+                read -r _ _ after <"$SYS/block/$dev/bd_stat"
+                ((after > written)) && note writeback device="$dev" ok:=true \
+                    written:=$(((after - written) * 4 / 1024)) freed:=$(((used - now) / 1048576))
+            done
+        done
+    ) &
+}
+
+# --- Steam's UI --------------------------------------------------------------
+
+# Steam's browser processes, one pid per line: read from /proc without a
+# process per entry (a few hundred, on every refresh). An ended one, a zombie
+# until its stopped parent reaps it, is not one.
+steam_ui_pids() {
+    local p s
+    for p in /proc/[0-9]*; do
+        [[ -O $p ]] || continue
+        { read -r s <"$p/stat"; } 2>/dev/null || continue
+        [[ $s == *" (steamwebhelper) "* ]] || continue
+        s=${s##*) }
+        [[ ${s%% *} != Z ]] && echo "${p#/proc/}"
+    done
+}
+
+# The windows Steam opens again on asking, by title.
+steam_ui_url() {
+    case "$1" in
+        Steam) echo steam://open/main ;;
+        "Friends List") echo steam://open/friends ;;
+        *) return 1 ;;
+    esac
+}
+
+# End Steam's UI (see the top) when the Steam behind it is part of the game:
+# every browser process in one of the game's cgroups, none of them the game's
+# own (a Steam dialog on the gaming workspace, or what the game talks to:
+# refresh tries again), and a sandbox between each and Steam in that same
+# cgroup. A Steam that is not the game's is left to the freezer, whole.
+stop_steam_ui() {
+    local pid up cg mem key value start ok
+    local -a ui chain=()
+    local -A isui=() seen=()
+    mapfile -t ui < <(steam_ui_pids)
+    if [[ -d $STEAMUI ]]; then
+        # Ended already; unless a leave that did not finish let it go on, and
+        # Steam started it again: what that record still holds goes on too.
+        ((${#ui[@]})) || return 0
+        resume_steam_sandbox || return 0
+        rm -rf "$STEAMUI"
+    fi
+    ((${#ui[@]})) || return 0
+    for pid in "${ui[@]}"; do
+        if has "$PROTECTED" "$pid"; then
+            log "Steam's UI is part of the game: left running"
+            return 0
+        fi
+        has "$PROTECTED_CG" "$(cgroup_of "$pid")" || return 0
+        isui[$pid]=1
+    done
+    # The sandbox: what is between each topmost browser process and Steam.
+    for pid in "${ui[@]}"; do
+        up=$(parent_of "$pid")
+        [[ -n $up ]] || continue # (ended meanwhile)
+        [[ -n ${isui[$up]:-} ]] && continue
+        if has "$PROTECTED" "$up"; then
+            log "Steam's UI has no sandbox: left running"
+            return 0
+        fi
+        cg=$(cgroup_of "$pid")
+        while :; do
+            if [[ -z $up ]] || ((up <= 1)) || [[ $(cgroup_of "$up") != "$cg" ]]; then
+                log "Steam's UI is not below the game's Steam: left running"
+                return 0
+            fi
+            [[ -n ${seen[$up]:-} ]] && break
+            has "$PROTECTED" "$up" && break
+            seen[$up]=1
+            chain+=("$up")
+            up=$(parent_of "$up")
+        done
+    done
+    ((${#chain[@]})) || return 0
+    mkdir -p "$STEAMUI" || return 0
+    # Its windows Steam can open again, and what it holds, for the journal.
+    if ! (for pid in "${chain[@]}"; do
+        start=$(starttime_of "$pid") || exit 1
+        echo "$pid $start"
+    done) >"$STEAMUI/parked" ||
+        ! jq -r --argjson ui "[$(IFS=,; echo "${ui[*]}")]" \
+            '.[] | select(.pid as $p | $ui | index($p)) | [.title, .workspace.name] | @tsv' <<<"$CLIENTS" |
+        while IFS=$'\t' read -r title ws; do
+            if steam_ui_url "$title" >/dev/null; then printf '%s\t%s\n' "$title" "$ws"; fi
+        done >"$STEAMUI/windows"; then
+        rm -rf "$STEAMUI"
+        return 0
+    fi
+    mem=0
+    for pid in "${ui[@]}"; do
+        { while read -r key value _; do [[ $key == Pss: ]] && mem=$((mem + value)); done <"/proc/$pid/smaps_rollup"; } 2>/dev/null || continue
+    done
+    kill -STOP "${chain[@]}" 2>/dev/null
+    for _ in $(seq 1 20); do
+        ok=1
+        for pid in "${chain[@]}"; do [[ $(state_of "$pid") == [Tt] ]] || ok=0; done
+        ((ok)) && break
+        sleep 0.1
+    done
+    if ! ((ok)); then
+        kill -CONT "${chain[@]}" 2>/dev/null
+        rm -rf "$STEAMUI"
+        log "Steam's sandbox did not stop: its UI left running"
+        return 0
+    fi
+    # (A process it started meanwhile goes in a later round.)
+    for _ in 1 2 3; do
+        mapfile -t ui < <(steam_ui_pids)
+        ((${#ui[@]})) || break
+        kill -KILL "${ui[@]}" 2>/dev/null
+        sleep 0.1
+    done
+    mapfile -t ui < <(steam_ui_pids)
+    if ((${#ui[@]})); then
+        log "Steam's UI did not all end (${ui[*]} left), its sandbox stopped: ${chain[*]}"
+        note steam_ui action=end ok:=false left:="${#ui[@]}"
+        return 0
+    fi
+    log "ended Steam's UI ($((mem / 1024)) MiB), its sandbox stopped: ${chain[*]}"
+    note steam_ui action=end ok:=true memory:="$((mem / 1024))" windows:="$(wc -l <"$STEAMUI/windows")"
+}
+
+# Let the stopped sandbox go on: it finds the UI gone and exits, and Steam
+# starts it again. What could not be let go on stays in the record.
+resume_steam_sandbox() {
+    local pid start left=""
+    [[ -e $STEAMUI/parked ]] || return 0
+    while read -r pid start; do
+        same_process "$pid" "$start" || continue
+        kill -CONT "$pid" 2>/dev/null || ! same_process "$pid" "$start" || left+="$pid $start"$'\n'
+    done <"$STEAMUI/parked"
+    write_lines "$STEAMUI/parked" "$left"
+    [[ -z $left ]]
+}
+
+# Steam's UI back, and its windows that were open opened again where they
+# were, in the background (Steam takes a few seconds).
+start_steam_ui() {
+    local id lines
+    [[ -d $STEAMUI ]] || return 0
+    if ! resume_steam_sandbox; then
+        note steam_ui action=resume ok:=false
+        return 1
+    fi
+    note steam_ui action=resume ok:=true
+    lines=$(cat "$STEAMUI/windows" 2>/dev/null)
+    rm -rf "$STEAMUI"
+    [[ -n $lines ]] || return 0
+    { read -r id <"$SESSION"; } 2>/dev/null || id=""
+    (
+        exec 9>&- </dev/null >/dev/null 2>&1
+        NOTE_DIR=${id:+$SESSIONS/$id}
+        while IFS=$'\t' read -r title ws; do
+            reopen_steam_window "$id" "$title" "$ws" || break
+        done <<<"$lines"
+    ) &
+    return 0
+}
+
+# Off (or leaving), and no stay begun since SESSION's: a window opened now
+# would not land over a game.
+steam_window_due() {
+    local now
+    [[ ! -e $ON || -e $LEFT ]] && { read -r now <"$SESSION"; } 2>/dev/null && [[ $now == "$1" ]]
+}
+
+# Ask Steam for a window once its new UI is up, placed by a rule of its own
+# (made again for each ask: a config reload meanwhile drops it), until it
+# shows. Never while a stay is on, and never starting a Steam that ended.
+reopen_steam_window() { # reopen_steam_window SESSION TITLE WORKSPACE
+    local id=$1 title=$2 ws=$3 url rule shown=false
+    url=$(steam_ui_url "$title") || return 0
+    [[ $ws == special:* || $ws =~ ^[0-9]+$ ]] || ws="name:$ws"
+    [[ $ws != *"]==]"* ]] || return 0
+    rule=GamingModeSteamWindow$BASHPID
+    # (Asked before the new UI is up, Steam forgets it.)
+    for _ in $(seq 1 300); do
+        [[ -n $(steam_ui_pids) ]] && break
+        sleep 0.1
+    done
+    if [[ -n $(steam_ui_pids) ]]; then
+        for _ in $(seq 1 15); do
+            steam_window_due "$id" && pgrep -x -u "$UID" steam >/dev/null || break
+            hyprctl eval "if $rule then pcall(function() $rule:set_enabled(false) end) end
+                $rule = hl.window_rule({ name = \"gaming-mode-steam-window-$BASHPID\",
+                    match = { class = \"^(steam)\$\", title = [==[^($title)\$]==] },
+                    workspace = [==[$ws silent]==], no_initial_focus = true })" >/dev/null || break
+            timeout 10 steam "$url"
+            for _ in $(seq 1 20); do
+                if hyprctl -j clients | jq -e --arg t "$title" 'any(.[]; .class == "steam" and .title == $t)' >/dev/null; then
+                    shown=true
+                    break 2
+                fi
+                sleep 0.1
+            done
+        done
+        hyprctl eval "if $rule then pcall(function() $rule:set_enabled(false) end) end
+            $rule = nil" >/dev/null
+    fi
+    note steam_window title="$title" workspace="$3" ok:=$shown
+    [[ $shown == true ]]
 }
 
 # --- the backdrop ------------------------------------------------------------
@@ -998,7 +1282,8 @@ backdrop_leave() {
 # (once), and the picture with the readout, shown if this stay is still on.
 # Drawn at idle priority, and only while the backdrop can be seen: under a
 # game it would cost the game memory for nothing. The rest (the driver query,
-# the lock) at normal priority, so nothing waits behind a starved process.
+# the lock) at the priority of what started it, so nothing waits behind a
+# starved process.
 # One at a time.
 readout_later() { # readout_later DELAY
     local id
@@ -1219,12 +1504,13 @@ game_processes() {
 
 enter() {
     local id
+    renice -n 10 -p $$ >/dev/null # (under the game: its work waits for the game's)
     panel_close
     # (After a leave that did not finish: what is now part of the game must
     # not stay frozen under it.)
     thaw_apps protected
     touch "$ON"
-    rm -f "$CLAIMED" "$LEFT" "$RETRIES" "$REVIEW"
+    rm -f "$CLAIMED" "$LEFT" "$RETRIES" "$REVIEW" "$VISIT"
     new_session
     log "enter (game pids: $(tr '\n' ' ' <<<"$GAME_PIDS"))"
     note enter trigger="$ENTER_TRIGGER" game:="$(game_windows)" \
@@ -1245,7 +1531,9 @@ enter() {
     fi
     stop_shell
     close_terminals
+    stop_steam_ui
     freeze_apps
+    writeback_later
     note ready
     { read -r id <"$SESSION"; } 2>/dev/null && touch "$SESSIONS/$id/ready"
     readout_later 2 # (what the desktop held takes a moment to be freed)
@@ -1255,12 +1543,14 @@ enter() {
 # the game, stop a shell that came back, freeze what started since.
 refresh() {
     local id game
+    renice -n 10 -p $$ >/dev/null
     panel_close
     # A config reload meanwhile (a layout switch, say) undid these.
     [[ -e $ANR ]] && hyprctl eval 'hl.config({ misc = { enable_anr_dialog = false } })' >/dev/null
     [[ -e $NOANIM ]] && hyprctl eval "if not GamingModeNoAnim then $NOANIM_RULE end" >/dev/null
     thaw_apps protected
     stop_shell
+    stop_steam_ui
     freeze_apps
     # The game as it is now (at enter it may have been a launcher's dialog).
     game=$(game_windows)
@@ -1273,14 +1563,28 @@ refresh() {
 }
 
 leave() {
-    local failed=0 ok=true
+    local failed=0 ok=true visit=false trigger
     log "leave"
-    touch "$LEFT"
-    note leave trigger="$LEAVE_TRIGGER" game:="$(game_windows)"
+    # (A retry is the leave it retries; off and pause are themselves.)
+    trigger=$LEAVE_TRIGGER
+    if [[ $trigger != retry ]] || ! { read -r trigger <"$LEFT"; } 2>/dev/null || [[ -z $trigger ]]; then
+        trigger=$LEAVE_TRIGGER # (a retry of an unknown leave: a whole one)
+        echo "$trigger" >"$LEFT"
+    fi
+    if [[ $trigger == left && -n $(game_window_list address) ]]; then
+        visit=true
+        [[ -e $VISIT ]] || uptime_s >"$VISIT"
+    fi
+    note leave trigger="$LEAVE_TRIGGER" game:="$(game_windows)" visit:=$visit
     thaw_apps || failed=1
+    if [[ $visit == false ]]; then
+        start_steam_ui || failed=1
+    fi
     reconnect_displays || failed=1
     start_shell || failed=1
-    unmirror_screens || failed=1
+    if [[ $visit == false ]]; then
+        unmirror_screens || failed=1
+    fi
     backdrop_leave
     reopen_terminals || failed=1
     restore_layer_fades || { note step name=fades ok:=false; failed=1; }
@@ -1299,7 +1603,43 @@ leave() {
         return 1
     fi
     rm -f "$ON" "$PINNED" "$CLAIMED" "$LEFT"
+    if [[ $visit == true ]]; then
+        rm -f "$REVIEW" # (due once the stay is over: end_visit)
+        [[ -d $STEAMUI ]] && sync_later "$STEAM_LATER"
+    else
+        rm -f "$VISIT"
+    fi
     prerender_later
+}
+
+# After a visit to the desktop (leave): once the game's windows are gone the
+# stay is over, and the screens' layout and Steam's UI go back as they were,
+# the review panel due; while they are up, Steam's UI comes back once the
+# visit has lasted STEAM_LATER seconds (asked again until it has). What fails
+# is tried again at the next sync, and status lists it.
+end_visit() { # end_visit [now]: over whatever is on screen (off, pause)
+    local game="" since
+    [[ -e $VISIT || -e $MIRRORED || -d $STEAMUI ]] || return 0
+    [[ ${1:-} == now ]] || game=$(game_window_list address) || return 0
+    if [[ -z $game ]]; then
+        # (Once: what fails is tried again at the next sync.)
+        if [[ -e $VISIT ]]; then
+            log "the game's windows are gone: the stay is over"
+            note over
+            rm -f "$VISIT"
+            touch "$REVIEW"
+        fi
+        start_steam_ui
+        unmirror_screens
+        return 0
+    fi
+    [[ -d $STEAMUI ]] || return 0
+    { read -r since <"$VISIT"; } 2>/dev/null || since=0
+    if (($(uptime_s) - since >= STEAM_LATER)) && { log "the visit lasts: Steam's UI back"; start_steam_ui; }; then
+        return 0
+    fi
+    # (Hidden, the gaming workspace sends no syncs while the visit lasts.)
+    sync_later "$STEAM_LATER"
 }
 
 # Leave, and on failure try again in 10 s, six times at most. The panel is
@@ -1353,7 +1693,7 @@ follow() {
         return 0
     fi
     if ((shown == 2)); then
-        [[ -e $ON ]] && sync_later 2 # Hyprland can't be asked right now: ask again
+        [[ -e $ON || -e $VISIT ]] && sync_later 2 # Hyprland can't be asked right now: ask again
         return 1
     fi
     # A leave that did not finish is tried again wherever the workspace is.
@@ -1363,11 +1703,16 @@ follow() {
         return
     fi
     if ((shown == 3)); then
-        [[ -e $ON ]] && game_closed
+        if [[ -e $ON ]]; then game_closed; else end_visit; fi
         backdrop_follow
         return 0
     fi
-    if [[ -e $ON ]]; then leave_or_retry; else backdrop_follow; fi
+    if [[ -e $ON ]]; then
+        leave_or_retry
+    else
+        end_visit
+        backdrop_follow
+    fi
 }
 
 # --- report ----------------------------------------------------------------
@@ -1430,13 +1775,13 @@ case "${1:-}" in
     off)
         rm -f "$PINNED"
         LEAVE_TRIGGER=off
-        if [[ -e $ON ]]; then leave_or_retry; fi
+        if [[ -e $ON ]]; then leave_or_retry; else end_visit now; fi
         panel_follow
         ;;
     pause)
         touch "$PAUSED"
         LEAVE_TRIGGER=pause
-        if [[ -e $ON ]]; then leave_or_retry; fi
+        if [[ -e $ON ]]; then leave_or_retry; else end_visit now; fi
         panel_follow
         ;;
     resume)
@@ -1468,8 +1813,10 @@ case "${1:-}" in
             [[ -d $n ]] && echo "closed terminal on workspace $(<"$n/workspace"): $(tr '\0' ' ' <"$n/cmdline")$(tr '\n' ' ' <"$n/attach")"
         done
         if [[ -e $DISPLAYS ]]; then sed 's/^/disconnected: /' "$DISPLAYS"; fi
+        if [[ -e $VISIT ]]; then echo "visiting the desktop: the stay is over once the game's windows are gone"; fi
         if [[ -e $MIRRORED ]]; then echo "screens mirrored (extended again after)"; fi
         if [[ -e $FROZEN ]]; then sed "s|^$APPS/|frozen: |" "$FROZEN"; fi
+        if [[ -e $STEAMUI/parked ]]; then echo "Steam's UI ended, its sandbox stopped: $(cut -d' ' -f1 "$STEAMUI/parked" | tr '\n' ' ')"; fi
         ;;
     report) report ;;
     *)

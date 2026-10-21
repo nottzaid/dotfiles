@@ -5,7 +5,8 @@
 -- the desktop awake). The script works out the wanted state itself under a
 -- lock (`sync`), so events may reach it in any order; this only saves it the
 -- calls where nothing it cares about changed: whether the workspace is
--- shown, empty or not, and which windows are on it. A config reload (a
+-- shown, empty or not, and which windows are on it; hidden, whether it has
+-- any (a game closing during a visit to the desktop ends the stay). A config reload (a
 -- layout switch reloads) syncs once: what gaming mode set at runtime is
 -- undone by it and has to be set again. Its backdrop shows on the gaming workspace's screen
 -- while nothing covers that screen (a fullscreen window, or one over 85% of
@@ -43,6 +44,12 @@ local function syncGamingMode()
         end
         table.sort(addresses)
         seen = "on " .. table.concat(addresses, " ")
+    elseif ws ~= nil and ws.windows > 0 then
+        -- (Steam's own windows there are not the game: gaming-mode's
+        -- game_window_list.)
+        for _, w in ipairs(hl.get_workspace_windows("name:gaming")) do
+            if w.class ~= "steam" then seen = "hidden" end
+        end
     end
     if seen ~= lastSeen then
         lastSeen = seen

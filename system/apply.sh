@@ -58,8 +58,45 @@ if ! compgen -G "/sys/class/bluetooth/hci*" >/dev/null; then
 fi
 systemctl restart systemd-resolved
 
-# Gaming mode: the helper that disconnects the other screens, runnable
-# without a password (files/bin/gaming-mode).
+# zram swap: a disk behind it, for what sits untouched in it
+# (libexec/zram-writeback). A zram swap set up without one is set up again
+# now if what it holds fits in free RAM (taking it off swap reads it all
+# back), else it gets one at the next boot.
+install -Dm755 "$HERE/libexec/zram-writeback" /usr/local/libexec/zram-writeback
+install -Dm644 "$HERE/etc/systemd/system/systemd-zram-setup@.service.d/writeback.conf" \
+    /etc/systemd/system/systemd-zram-setup@.service.d/writeback.conf
+systemctl daemon-reload
+for sys in /sys/block/zram*; do
+    [[ -e $sys/backing_dev && $(<"$sys/backing_dev") == none ]] || continue
+    dev=${sys##*/}
+    used=$(awk -v d="/dev/$dev" '$1 == d {print $4}' /proc/swaps) # KiB
+    [[ -n $used ]] || continue
+    if ((used + 1048576 < $(awk '/^MemAvailable:/ {print $2}' /proc/meminfo))); then
+        # (zram-generator's reset right after swapoff can find the device
+        # still open by udev's probe, and fail: reset it here until it takes.)
+        systemctl stop "dev-$dev.swap" "systemd-zram-setup@$dev.service" || true
+        udevadm settle || true
+        for _ in $(seq 1 50); do
+            [[ $(<"$sys/initstate") == 0 ]] && break
+            echo 1 >"$sys/reset" 2>/dev/null || sleep 0.1
+        done
+        systemctl reset-failed "systemd-zram-setup@$dev.service" 2>/dev/null || true
+        if systemctl start "dev-$dev.swap" && [[ $(<"$sys/backing_dev") != none ]]; then
+            note "$dev: $(<"$sys/backing_dev") behind it"
+        elif swapon --show=NAME --noheadings | grep -qx "/dev/$dev"; then
+            note "$dev: swap again, but no disk behind it: see journalctl -u systemd-zram-setup@$dev"
+        else
+            # (Never left without swap: the device as it was, if it still is.)
+            swapon -p 100 "/dev/$dev" 2>/dev/null || true
+            note "$dev: could not be set up again ($(swapon --show=NAME --noheadings | grep -qx "/dev/$dev" && echo "swap as before" || echo "NO SWAP until the next boot")): see systemctl status systemd-zram-setup@$dev"
+        fi
+    else
+        note "$dev: holds too much to set up again now; a disk behind it at the next boot"
+    fi
+done
+
+# Gaming mode: the helpers that disconnect the other screens and move cold
+# swap to disk, runnable without a password (files/bin/gaming-mode).
 install -Dm755 "$HERE/libexec/gaming-mode-display" /usr/local/libexec/gaming-mode-display
 install -Dm440 "$HERE/etc/sudoers.d/gaming-mode" /etc/sudoers.d/gaming-mode
 visudo -cf /etc/sudoers.d/gaming-mode >/dev/null

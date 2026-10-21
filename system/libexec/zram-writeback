@@ -1,0 +1,71 @@
+#!/bin/sh
+# zram-writeback attach|detach DEVICE, zram-writeback writeback DEVICE AGE:
+# give a zram swap device (zram0) a disk behind it, and move what has sat
+# untouched in it for AGE seconds onto that disk. Compressed swap is still
+# RAM; what goes to the disk frees it, and comes back on its own when read.
+#
+# attach runs before the device is set up (a drop-in for
+# systemd-zram-setup@.service: a backing device can only be given before),
+# detach after it is reset. The disk is a file in a btrfs subvolume of its
+# own, outside snapshots, without copy-on-write, attached as a loop device;
+# pages are written to it compressed. writeback is what gaming mode
+# (files/bin/gaming-mode) runs while a stay lasts, through
+# /etc/sudoers.d/gaming-mode, so this accepts nothing but these words, a zram
+# device name and a number of seconds.
+set -eu
+DIR=/var/lib/zram-writeback
+FILE=$DIR/backing
+
+usage() { echo "usage: zram-writeback attach|detach DEVICE | writeback DEVICE AGE" >&2; exit 2; }
+# (Every argument checked before anything is touched.)
+case "${2:-}" in zram[0-9] | zram[0-9][0-9]) ;; *) usage ;; esac
+case "${1:-}" in
+    attach | detach) [ $# -eq 2 ] || usage ;;
+    writeback)
+        [ $# -eq 3 ] || usage
+        case "$3" in '' | *[!0-9]*) usage ;; esac
+        [ "${#3}" -le 5 ] && [ "$3" -ge 1 ] && [ "$3" -le 86400 ] || usage
+        ;;
+    *) usage ;;
+esac
+sys=/sys/block/$2
+[ -e "$sys/backing_dev" ] || { echo "zram-writeback: $2 has no writeback" >&2; exit 1; }
+
+case "$1" in
+    attach)
+        [ "$(cat "$sys/backing_dev")" = none ] || exit 0
+        # On btrfs, a subvolume of its own (inode 256), or snapshots of / would
+        # carry the file: a rollback leaves an empty directory where it was.
+        if [ "$(stat -f -c %T /var/lib)" = btrfs ]; then
+            if [ -d "$DIR" ] && [ "$(stat -c %i "$DIR")" != 256 ]; then
+                rmdir "$DIR" || { echo "zram-writeback: $DIR is not a subvolume, and not empty" >&2; exit 1; }
+            fi
+            [ -d "$DIR" ] || btrfs -q subvolume create "$DIR"
+            chattr +C "$DIR" # (before the file: it inherits it)
+        else
+            mkdir -p "$DIR"
+        fi
+        chmod 700 "$DIR"
+        if [ ! -e "$FILE" ]; then
+            # As large as the device can be (zram-size = ram): all of it fits.
+            size=$(awk '/^MemTotal:/ {print $2 * 1024}' /proc/meminfo)
+            fallocate -l "$size" "$FILE.new"
+            chmod 600 "$FILE.new"
+            mv "$FILE.new" "$FILE"
+        fi
+        loop=$(losetup -j "$FILE" -O NAME -n | head -n 1)
+        [ -n "$loop" ] || loop=$(losetup --find --show --direct-io=on "$FILE")
+        [ -e "$sys/compressed_writeback" ] && echo yes >"$sys/compressed_writeback"
+        echo "$loop" >"$sys/backing_dev"
+        ;;
+    detach)
+        [ -e "$FILE" ] || exit 0
+        [ "$(cat "$sys/backing_dev")" = none ] || exit 0 # (still in use)
+        for loop in $(losetup -j "$FILE" -O NAME -n); do losetup -d "$loop"; done
+        ;;
+    writeback)
+        [ "$(cat "$sys/backing_dev")" != none ] || { echo "zram-writeback: $2 has no disk behind it" >&2; exit 1; }
+        echo "$3" >"$sys/idle"
+        echo idle >"$sys/writeback"
+        ;;
+esac

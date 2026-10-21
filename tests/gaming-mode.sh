@@ -6,6 +6,7 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-gaming-mode.XXXXXX")"
 trap 'rm -rf -- "$TMP"' EXIT
 script="$ROOT/files/bin/gaming-mode"
 helper="$ROOT/system/libexec/gaming-mode-display"
+writeback="$ROOT/system/libexec/zram-writeback"
 
 fail() { printf 'FAIL %s\n' "$*" >&2; exit 1; }
 
@@ -16,8 +17,16 @@ grep -Fq 'require("config.gaming")' "$ROOT/files/hypr/hyprland.lua" || fail "hyp
 grep -Fq 'hl.exec_cmd("~/.local/bin/gaming-mode sync")' "$ROOT/files/hypr/config/gaming.lua" ||
     fail "gaming.lua does not run gaming-mode sync"
 grep -Fq 'gaming-mode-display' "$ROOT/system/apply.sh" || fail "system/apply.sh does not install the display helper"
-grep -Fxq '%wheel ALL=(root) NOPASSWD: /usr/local/libexec/gaming-mode-display' "$ROOT/system/etc/sudoers.d/gaming-mode" ||
-    fail "the sudoers rule names something other than the helper"
+[[ "$(grep -v '^#' "$ROOT/system/etc/sudoers.d/gaming-mode")" == "$(printf '%s\n' \
+    '%wheel ALL=(root) NOPASSWD: /usr/local/libexec/gaming-mode-display' \
+    '%wheel ALL=(root) NOPASSWD: /usr/local/libexec/zram-writeback')" ]] ||
+    fail "the sudoers rules name something other than the helpers"
+for f in zram-writeback systemd-zram-setup@.service.d/writeback.conf; do
+    grep -Fq "$f" "$ROOT/system/apply.sh" || fail "system/apply.sh does not install $f"
+done
+grep -Fxq 'ExecStartPre=-/usr/local/libexec/zram-writeback attach %i' \
+    "$ROOT/system/etc/systemd/system/systemd-zram-setup@.service.d/writeback.conf" ||
+    fail "zram swap is not given its disk before it is set up (or failing to stops it)"
 for f in gaming-mode-art gaming-mode-review; do
     grep -Fq "files/bin/$f" "$ROOT/modules/tools.nix" || fail "modules/tools.nix does not deploy $f"
 done
@@ -31,11 +40,17 @@ for pkg in swaybg quickshell python-numpy python-pillow; do
     grep -Fxq "$pkg" "$ROOT/packages/desktop.txt" || fail "packages/desktop.txt lacks $pkg"
 done
 
-# The helper runs as root: it must refuse anything but off|detect and a DRM
-# connector name, before touching sysfs.
+# The helpers run as root: they must refuse anything but their words, a
+# device name and (writeback) a number of seconds, before touching anything.
 for args in "" "on card1-HDMI-A-1" "off HDMI-A-1" "off card1-../../power/state" "detect card1-a/b"; do
     # shellcheck disable=SC2086 # the words are the arguments
     if sh "$helper" $args >/dev/null 2>&1; then fail "the display helper accepted '$args'"; fi
+done
+for args in "" "writeback" "writeback zram0" "writeback zram0 0" "writeback zram0 86401" "writeback zram0 1x" \
+    "writeback zram0 -5" "writeback ../zram0 5" "writeback sda 5" "writeback zram0 5 6" "attach zram0 x" \
+    "detach zram0 x" "bogus zram0" "attach zram" "attach zram123"; do
+    # shellcheck disable=SC2086 # the words are the arguments
+    if sh "$writeback" $args >/dev/null 2>&1; then fail "the writeback helper accepted '$args'"; fi
 done
 
 export XDG_RUNTIME_DIR="$TMP/run"
@@ -115,7 +130,7 @@ cg="$TMP/cg"
 mkdir -p "$cg"
 echo 1 >"$cg/cgroup.freeze"
 : >"$cg/memory.reclaim"
-reclaim_cold "$cg"
+RECLAIM_LATER=0 reclaim_cold "$cg"
 reclaimer=$!
 # (Read until seen: each step rewrites the file, so a read may meet it empty.)
 seen=""
@@ -332,6 +347,148 @@ fake_shown=3
 follow
 [[ "$(cat "$TMP/follow-calls")" == backdrop ]] || fail "the empty gaming workspace (the lobby) did not get its backdrop"
 unset -f gaming_shown leave_or_retry backdrop_follow tv calls
+
+# Steam's UI: ended under the game's Steam with its sandbox stopped first,
+# and left running when any of it is the game's, when nothing stands between
+# it and Steam, and when the Steam it is under is not the game's (frozen
+# whole instead). The user's systemd 5 > bash 9 > Steam 10 > srt-bwrap 20 >
+# pv-adverb 30 > browser 40 > renderer 41, a crash handler 42 under
+# pv-adverb; all but systemd in Steam's unit S.
+(
+    STEAMUI="$TMP/steam-ui" ON="$TMP/steam-on" LEFT="$TMP/steam-left" SESSION="$TMP/steam-session"
+    declare -A fake_parent fake_cg
+    steam_tree() {
+        fake_ui=$'40\n41\n42'
+        fake_parent=([9]=5 [10]=9 [20]=10 [30]=20 [40]=30 [41]=40 [42]=30 [5]=1)
+        fake_cg=([5]=/user)
+        PROTECTED=$'5\n10'
+        PROTECTED_CG=$'/user\nS'
+        fake_state=T
+        rm -rf "$STEAMUI"
+        : >"$TMP/steam-calls"
+    }
+    steam_ui_pids() { [[ -n $fake_ui ]] && echo "$fake_ui"; }
+    parent_of() { echo "${fake_parent[$1]:-}"; }
+    cgroup_of() { echo "${fake_cg[$1]:-S}"; }
+    starttime_of() { echo "s$1"; }
+    state_of() { echo "$fake_state"; }
+    same_process() { [[ " ${fake_gone:-} " != *" $1 "* ]]; }
+    kill() { echo "kill $*" >>"$TMP/steam-calls"; [[ $1 == -KILL ]] && fake_ui=""; return 0; }
+    sleep() { :; }
+    # shellcheck disable=SC2034 # read by stop_steam_ui
+    CLIENTS='[{"pid": 40, "title": "Steam", "workspace": {"name": "2"}}, {"pid": 40, "title": "Settings", "workspace": {"name": "2"}}]'
+    steam_tree
+    stop_steam_ui
+    [[ "$(cat "$STEAMUI/parked")" == $'30 s30\n20 s20' ]] || fail "the sandbox was not recorded: $(cat "$STEAMUI/parked")"
+    [[ "$(cat "$TMP/steam-calls")" == $'kill -STOP 30 20\nkill -KILL 40 41 42' ]] ||
+        fail "Steam's UI was not ended behind a stopped sandbox: $(cat "$TMP/steam-calls")"
+    [[ "$(cat "$STEAMUI/windows")" == $'Steam\t2' ]] || fail "Steam's windows were not recorded: $(cat "$STEAMUI/windows")"
+    # Ended already: nothing more, until Steam's UI runs again with the record left.
+    : >"$TMP/steam-calls"
+    stop_steam_ui
+    [[ ! -s $TMP/steam-calls ]] || fail "an ended UI was ended again: $(cat "$TMP/steam-calls")"
+    fake_ui=$'40\n41\n42'
+    echo "20 s20" >"$STEAMUI/parked"
+    stop_steam_ui
+    [[ "$(cat "$TMP/steam-calls")" == $'kill -CONT 20\nkill -STOP 30 20\nkill -KILL 40 41 42' ]] ||
+        fail "a record left by an unfinished leave was not let go on first: $(cat "$TMP/steam-calls")"
+    # Letting go on: a process that ended meanwhile is no failure; the record goes.
+    : >"$TMP/steam-calls"
+    command() { [[ $* != "-v steam" ]] && builtin command "$@"; }
+    fake_gone=30 start_steam_ui || fail "Steam's sandbox was not let go on"
+    [[ "$(cat "$TMP/steam-calls")" == "kill -CONT 20" && ! -e $STEAMUI ]] ||
+        fail "Steam's sandbox did not go on: $(cat "$TMP/steam-calls")"
+    for case in "the browser is the game's" "no sandbox" "Steam is not the game's" "the game is not below Steam" "the sandbox does not stop"; do
+        steam_tree
+        # shellcheck disable=SC2034 # read by stop_steam_ui
+        case $case in
+            "the browser is the game's") PROTECTED+=$'\n40' ;;
+            "no sandbox") fake_parent[40]=10 fake_parent[42]=10 ;;
+            "Steam is not the game's") PROTECTED=5 PROTECTED_CG=/user ;;
+            "the game is not below Steam") PROTECTED=5 ;;
+            "the sandbox does not stop") fake_state=S ;;
+        esac
+        stop_steam_ui
+        [[ ! -e $STEAMUI ]] && ! grep -q -- -KILL "$TMP/steam-calls" || fail "Steam's UI was ended when $case: $(cat "$TMP/steam-calls")"
+    done
+    [[ "$(cat "$TMP/steam-calls")" == $'kill -STOP 30 20\nkill -CONT 30 20' ]] || fail "a sandbox that did not stop was not let go on"
+    # Its windows open again only while off, for the stay that ended them.
+    echo 1 >"$SESSION"
+    steam_window_due 1 || fail "a window was not due after the stay"
+    touch "$ON"
+    if steam_window_due 1; then fail "a window was due while a stay is on"; fi
+    touch "$LEFT"
+    steam_window_due 1 || fail "a window was not due while leaving"
+    rm -f "$ON" "$LEFT"
+    echo 2 >"$SESSION"
+    if steam_window_due 1; then fail "a window was due for an earlier stay"; fi
+) || exit 1
+
+# A visit to the desktop (leaving while the game's windows are up) keeps the
+# screens' layout and Steam's UI as the stay has them, and the review panel
+# for later; they go back once the game's windows are gone, or (Steam's UI)
+# once the visit lasts.
+(
+    # shellcheck disable=SC2034 # read by leave
+    ON="$TMP/v/on" LEFT="$TMP/v/left" VISIT="$TMP/v/visit" REVIEW="$TMP/v/review" MIRRORED="$TMP/v/mirrored"
+    # shellcheck disable=SC2034 # read by leave
+    STEAMUI="$TMP/v/steam-ui" PINNED="$TMP/v/pinned" CLAIMED="$TMP/v/claimed" ANR="$TMP/v/anr" SESSION="$TMP/v/none"
+    mkdir -p "$TMP/v"
+    for f in thaw_apps start_steam_ui reconnect_displays start_shell unmirror_screens backdrop_leave \
+        reopen_terminals restore_layer_fades prerender_later sync_later; do
+        eval "$f() { echo $f >>\"\$TMP/v/calls\"; }"
+    done
+    game_window_list() { [[ -n ${fake_game:-} ]] && echo 0x1; return 0; }
+    game_windows() { echo '[]'; }
+    visit() { # visit TRIGGER GAME [LEFT-BEFORE]
+        rm -rf "$TMP/v/"*
+        touch "$ON" "$REVIEW"
+        [[ -n ${3:-} ]] && echo "$3" >"$LEFT"
+        mkdir -p "$STEAMUI"
+        LEAVE_TRIGGER=$1 fake_game=$2 leave
+        tr '\n' ' ' <"$TMP/v/calls"
+    }
+    [[ "$(visit left 1)" == "thaw_apps reconnect_displays start_shell backdrop_leave reopen_terminals restore_layer_fades sync_later prerender_later " ]] ||
+        fail "a visit restored the layout or Steam's UI: $(visit left 1)"
+    [[ -e $VISIT && ! -e $REVIEW && ! -e $ON ]] || fail "a visit was not recorded, or its review is due"
+    [[ "$(visit retry 1 left)" == "$(visit left 1)" ]] || fail "a retried visit was not a visit"
+    for args in "left|" "pause|1" "retry|1|pause" "off|1" "pause|1|left" "off|1|left" "retry|1|"; do
+        IFS='|' read -r trigger game before <<<"$args"
+        out=$(visit "$trigger" "$game" "$before")
+        [[ $out == *start_steam_ui*unmirror_screens* && ! -e $VISIT ]] || fail "leaving ($args) kept the stay's layout: $out"
+    done
+    # Ending it: Steam's UI after STEAM_LATER (asked again until it is back),
+    # all of it once the game is gone, the review then, once.
+    start_steam_ui() { echo start_steam_ui >>"$TMP/v/calls"; [[ -z ${fake_fail:-} ]] && rm -rf "$STEAMUI"; }
+    unmirror_screens() { echo unmirror_screens >>"$TMP/v/calls"; [[ -z ${fake_fail:-} ]] && rm -f "$MIRRORED"; }
+    calls() { tr '\n' ' ' <"$TMP/v/calls" 2>/dev/null; : >"$TMP/v/calls"; }
+    rm -rf "$TMP/v/"*
+    touch "$MIRRORED"
+    mkdir -p "$STEAMUI"
+    uptime_s >"$VISIT"
+    fake_game=1 end_visit
+    [[ "$(calls)" == "sync_later " && -e $VISIT ]] || fail "a visit ended early, or Steam's UI was not asked for later"
+    echo $(($(uptime_s) - STEAM_LATER)) >"$VISIT"
+    fake_fail=1 fake_game=1 end_visit
+    [[ "$(calls)" == "start_steam_ui sync_later " ]] || fail "Steam's UI that did not come back was not asked for again"
+    fake_game=1 end_visit
+    [[ "$(calls)" == "start_steam_ui " && -e $VISIT && ! -e $REVIEW ]] || fail "Steam's UI did not come back as the visit lasted"
+    fake_game=1 end_visit
+    [[ -z "$(calls)" ]] || fail "a visit with Steam's UI back asked for more"
+    fake_fail=1 fake_game="" end_visit
+    [[ "$(calls)" == "start_steam_ui unmirror_screens " && ! -e $VISIT && -e $REVIEW && -e $MIRRORED ]] ||
+        fail "the game gone did not end the stay"
+    rm -f "$REVIEW"
+    fake_game="" end_visit
+    [[ "$(calls)" == "start_steam_ui unmirror_screens " && ! -e $REVIEW && ! -e $MIRRORED ]] ||
+        fail "what failed at the end of a stay was not tried again, or the review came twice"
+    fake_game="" end_visit
+    [[ -z "$(calls)" && ! -e $REVIEW ]] || fail "a desktop with nothing kept from a stay ended one"
+    # A visit that held nothing back still ends with its review.
+    uptime_s >"$VISIT"
+    fake_game="" end_visit
+    [[ -e $REVIEW && ! -e $VISIT ]] || fail "a visit that held nothing back ended without its review"
+) || exit 1
 
 # The review: the TV's part in the stay, a button for it as it is now, and
 # the game closed.

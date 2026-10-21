@@ -1,3 +1,5 @@
 # Gaming mode (files/bin/gaming-mode) disconnects the screens the game is not
-# on while it runs and reconnects them after; only this helper, no password.
+# on while it runs and reconnects them after, and moves what sits untouched in
+# zram swap onto the disk behind it; only these helpers, no password.
 %wheel ALL=(root) NOPASSWD: /usr/local/libexec/gaming-mode-display
+%wheel ALL=(root) NOPASSWD: /usr/local/libexec/zram-writeback
