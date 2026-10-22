@@ -26,6 +26,18 @@ if [[ -f /etc/pam.d/greetd ]] && ! grep -q pam_gnome_keyring /etc/pam.d/greetd; 
         /etc/pam.d/greetd
 fi
 
+# Wi-Fi power saving off on machines without a battery: it trades latency
+# and jitter for power a desktop doesn't need to save. Applied to the live
+# link too, so no reconnect is needed.
+if ! compgen -G "/sys/class/power_supply/BAT*" >/dev/null; then
+    install -Dm644 "$HERE/etc/NetworkManager/conf.d/20-wifi-powersave-off.conf" \
+        /etc/NetworkManager/conf.d/20-wifi-powersave-off.conf
+    for dev in /sys/class/net/*/wireless; do
+        [[ -e $dev ]] || continue
+        dev=${dev%/wireless}; iw dev "${dev##*/}" set power_save off 2>/dev/null || true
+    done
+fi
+
 # pacman: refuse transactions that would fill the disk.
 sed -i 's/^#CheckSpace/CheckSpace/' /etc/pacman.conf
 
