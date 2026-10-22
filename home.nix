@@ -18,6 +18,7 @@
     ./modules/launcher.nix
     ./modules/layout.nix
     ./modules/nix.nix
+    ./modules/earshot.nix
   ];
   # Ownership: pacman owns binaries, drivers, and the GPU stack. Home Manager
   # owns configuration, plus the few CLI tools pacman lacks (modules/tools.nix).

@@ -21,6 +21,7 @@ nodejs
 noctalia
 noto-fonts-emoji
 pavucontrol
+pipewire-roc
 pnpm
 power-profiles-daemon
 python
