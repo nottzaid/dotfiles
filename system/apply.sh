@@ -36,6 +36,15 @@ if ! compgen -G "/sys/class/power_supply/BAT*" >/dev/null; then
         [[ -e $dev ]] || continue
         dev=${dev%/wireless}; iw dev "${dev##*/}" set power_save off 2>/dev/null || true
     done
+    # No roaming scans either: a desktop doesn't move (see the dispatcher
+    # script). Applied to the live link too.
+    install -Dm755 "$HERE/etc/NetworkManager/dispatcher.d/21-no-bgscan" \
+        /etc/NetworkManager/dispatcher.d/21-no-bgscan
+    for dev in /sys/class/net/*/wireless; do
+        [[ -e $dev ]] || continue
+        dev=${dev%/wireless}
+        /etc/NetworkManager/dispatcher.d/21-no-bgscan "${dev##*/}" up
+    done
 fi
 
 # Decline TDLS: the driver half-accepts it and the peer goes silent (see the

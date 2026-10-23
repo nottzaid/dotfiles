@@ -1,0 +1,12 @@
+#!/bin/sh
+# No background scanning while connected, on whatever network. NetworkManager
+# has wpa_supplicant scan for roaming candidates every 30 s once the signal
+# dips below -65 dBm (-70 where it has seen a single access point); each scan
+# takes the radio off channel for ~130 ms, once a second for ~10 s, which
+# Earshot hears as dropouts. A desktop has nowhere to roam to; it still finds
+# a new access point if the link is lost.
+[ "$2" = up ] || exit 0
+[ -e "/sys/class/net/$1/wireless" ] || exit 0
+id=$(wpa_cli -p /run/wpa_supplicant -i "$1" status 2>/dev/null | sed -n 's/^id=//p')
+[ -n "$id" ] || exit 0
+wpa_cli -p /run/wpa_supplicant -i "$1" set_network "$id" bgscan '""' >/dev/null 2>&1 || true
