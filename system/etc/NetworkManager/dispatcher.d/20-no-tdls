@@ -1,0 +1,9 @@
+#!/bin/sh
+# Decline TDLS (direct station-to-station links). This desktop's driver accepts
+# the setup but fails to install the link key ("Failed to set TPK to the
+# driver"), so a peer that moves onto the direct link, as the phone does a few
+# seconds into an Earshot stream, goes unheard until the link times out.
+# Going through the access point costs nothing at these rates.
+[ "$2" = up ] || exit 0
+[ -e "/sys/class/net/$1/wireless" ] || exit 0
+wpa_cli -p /run/wpa_supplicant -i "$1" set tdls_disabled 1 >/dev/null 2>&1 || true

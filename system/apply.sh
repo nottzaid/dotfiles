@@ -38,6 +38,15 @@ if ! compgen -G "/sys/class/power_supply/BAT*" >/dev/null; then
     done
 fi
 
+# Decline TDLS: the driver half-accepts it and the peer goes silent (see the
+# dispatcher script). Applied to the live link too.
+install -Dm755 "$HERE/etc/NetworkManager/dispatcher.d/20-no-tdls" \
+    /etc/NetworkManager/dispatcher.d/20-no-tdls
+for dev in /sys/class/net/*/wireless; do
+    [[ -e $dev ]] || continue
+    dev=${dev%/wireless}; wpa_cli -p /run/wpa_supplicant -i "${dev##*/}" set tdls_disabled 1 >/dev/null 2>&1 || true
+done
+
 # pacman: refuse transactions that would fill the disk.
 sed -i 's/^#CheckSpace/CheckSpace/' /etc/pacman.conf
 
