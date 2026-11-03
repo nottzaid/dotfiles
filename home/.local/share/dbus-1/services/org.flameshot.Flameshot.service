@@ -1,0 +1,5 @@
+# D-Bus activation goes through flameshot.service, so there is only one daemon.
+[D-BUS Service]
+Name=org.flameshot.Flameshot
+Exec=/usr/bin/flameshot
+SystemdService=flameshot.service

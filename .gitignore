@@ -4,6 +4,3 @@ eln-cache/
 elpa/
 ido.last
 plugin/packer_compiled.lua
-# Nix build output symlinks (never commit generations).
-result
-result-*

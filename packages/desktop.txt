@@ -27,14 +27,9 @@ power-profiles-daemon
 python
 python-evdev
 python-gobject
-python-numpy
-python-pillow
-quickshell
 ripgrep
 rsync
 slurp
-swash
-swaybg
 wireplumber
 wl-clipboard
 xdg-desktop-portal
@@ -48,3 +43,4 @@ rtkit
 typst
 zig
 ttf-fantasque-nerd
+stow

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Kitty (plain)
+GenericName=Terminal emulator
+Comment=Kitty with your login shell only, without Herdr
+TryExec=kitty
+Exec=kitty --override shell=.
+Icon=kitty
+Categories=System;TerminalEmulator;
+StartupNotify=true

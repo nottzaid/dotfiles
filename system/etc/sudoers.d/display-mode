@@ -1,0 +1,3 @@
+# display-mode (hosts/desktop/.local/bin/display-mode) disconnects the TV and connects it
+# again through this helper alone, without a password.
+%wheel ALL=(root) NOPASSWD: /usr/local/libexec/display-mode-helper

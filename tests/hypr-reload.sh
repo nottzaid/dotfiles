@@ -8,48 +8,29 @@ trap 'rm -rf -- "$TMP"' EXIT
 # host.lua reads the mode display-mode recorded this login; the mode loop below
 # must test the MODE line, not whatever Super+Shift+M last set.
 export DISPLAY_MODE_FILE="$TMP/no-recorded-mode"
+command -v Hyprland >/dev/null 2>&1 || { printf 'SKIP no Hyprland\n'; exit 0; }
 
-config="$ROOT/files/hypr/hyprland.lua"
-monitors="$ROOT/files/hosts/desktop/hypr/config/host.lua"
-rules="$ROOT/files/hypr/config/windowrules.lua"
-
-# A machine's Hyprland tree: the shared files plus files/hosts/<host>/hypr.
+# A machine's Hyprland config in a scratch home: the shared tree, plus its
+# host.lua, which hyprland.lua loads from $HOME.
 assemble() {
-    rm -rf "$TMP/hypr"
-    cp -r "$ROOT/files/hypr" "$TMP/hypr"
-    cp "$ROOT/components/yt-stream-workspace/hyprland/yt-stream-workspace.lua" "$TMP/hypr/"
-    cp -r "$ROOT/files/hosts/$1/hypr/." "$TMP/hypr/"
+    rm -rf "${TMP:?}/home"
+    mkdir -p "$TMP/home/.config"
+    cp -r "$ROOT/home/.config/hypr" "$TMP/home/.config/hypr"
+    cp "$ROOT/hosts/$1/.config/hypr/host.lua" "$TMP/home/.config/hypr/"
 }
 verify_tree() {
-    command -v Hyprland >/dev/null 2>&1 || return 0
-    Hyprland --verify-config --config "$TMP/hypr/hyprland.lua" 2>&1 | grep -q 'config ok'
+    HOME="$TMP/home" Hyprland --verify-config --config "$TMP/home/.config/hypr/hyprland.lua" 2>&1 | grep -q 'config ok'
 }
 
-grep -Fq 'require("config.windowrules")' "$config"
-grep -Fq 'require("config.host")' "$config"
-grep -Fq 'require("yt-stream-workspace")' "$config"
-for host_dir in "$ROOT"/files/hosts/*/; do
+for host_dir in "$ROOT"/hosts/*/; do
     host="$(basename "$host_dir")"
-    [[ -f "$host_dir/hypr/config/host.lua" ]] || { printf '%s has no hypr/config/host.lua\n' "$host" >&2; exit 1; }
     assemble "$host"
     verify_tree || { printf 'Hyprland config for %s is invalid\n' "$host" >&2; exit 1; }
 done
 # Both desktop monitor modes must produce a valid config, whichever is selected.
-grep -Eq '^local MODE = "(mirror|extended)"$' "$monitors"
 for mode in mirror extended; do
     assemble desktop
-    sed -i "s/^local MODE = .*/local MODE = \"$mode\"/" "$TMP/hypr/config/host.lua"
+    sed -i "s/^local MODE = .*/local MODE = \"$mode\"/" "$TMP/home/.config/hypr/host.lua"
     verify_tree || { printf 'desktop MODE=%s does not produce a valid config\n' "$mode" >&2; exit 1; }
 done
-grep -Fq 'name = "swash-overlay"' "$rules"
-grep -Fq 'fullscreen_state = 2' "$rules"
-grep -Fq 'sync_fullscreen = true' "$rules"
-if sed -n '/name = "swash-overlay"/,/^})/p' "$rules" | grep -Fq 'no_anim'; then
-    printf '%s\n' 'Swash animation is unexpectedly disabled' >&2
-    exit 1
-fi
-
-bash -n "$ROOT/files/bin/swash-screenshot"
-grep -Fq '$HOME/.local/bin/swash-screenshot' "$ROOT/files/noctalia.toml"
-
-printf '%s\n' 'PASS current Hyprland, Noctalia, and animated Swash integration'
+printf '%s\n' 'PASS Hyprland config for every machine and both desktop display modes'

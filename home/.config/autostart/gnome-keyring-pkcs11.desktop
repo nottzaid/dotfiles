@@ -1,0 +1,5 @@
+# gnome-keyring runs from its systemd socket, unlocked by PAM at login;
+# this XDG autostart copy would start a second daemon.
+[Desktop Entry]
+Type=Application
+Hidden=true

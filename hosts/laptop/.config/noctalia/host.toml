@@ -1,0 +1,14 @@
+# Laptop: Noctalia merges every *.toml here over config.toml. The built-in
+# panel's workspace buttons, and the battery before the clock.
+[bar.default]
+end = ["media", "network", "sep_1", "temp", "sep_2", "sysmon_2", "sep_3", "sysmon_3", "sep_4",
+       "volume", "sep_5", "battery", "sep_6", "clock", "tray", "notifications", "session", "spacer_2"]
+
+[widget.i3_workspaces]
+monitor = "eDP-1"
+
+[widget.battery]
+color = "#94e2d5"
+
+[widget.sep_6]
+type = "zaid/i3bar:separator"

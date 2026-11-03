@@ -1,0 +1,15 @@
+# The Flameshot daemon runs for the whole session, so Print never waits for
+# it to start (about half a second), and comes back if it dies.
+[Unit]
+Description=Flameshot screenshot daemon
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=org.flameshot.Flameshot
+ExecStart=/usr/bin/flameshot
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target

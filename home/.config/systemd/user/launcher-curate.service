@@ -1,0 +1,13 @@
+# Only entries that open a window stay in the app launcher (see
+# ~/.config/launcher-curate/rules).
+[Unit]
+Description=Hide launcher entries that cannot open a window
+
+[Service]
+Type=oneshot
+# Debounce: installs change many files at once.
+ExecStartPre=/usr/bin/sleep 2
+ExecStart=%h/.local/bin/launcher-curate
+
+[Install]
+WantedBy=default.target

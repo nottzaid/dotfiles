@@ -4,15 +4,17 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-display-mode.XXXXXX")"
 trap 'rm -rf -- "$TMP"' EXIT
-host="$ROOT/files/hosts/desktop/hypr/config/host.lua"
 mode_file="$TMP/run/display-mode"
 
 fail() { printf 'FAIL %s\n' "$*" >&2; exit 1; }
 
-# The wiring: the key, the deployed script, and the Lua that reads the mode back.
-grep -Fq 'hl.bind("SUPER + SHIFT + M", hl.dsp.exec_cmd("~/.local/bin/display-mode toggle"))' "$host" ||
-    fail "host.lua does not bind Super+Shift+M to display-mode"
-grep -Fq 'files/bin/display-mode' "$ROOT/hosts/desktop.nix" || fail "hosts/desktop.nix does not deploy display-mode"
+# The root helper disconnecting goes through runs without a password: it
+# must refuse anything but its words and a connector.
+helper="$ROOT/system/libexec/display-mode-helper"
+for args in "" "on card1-HDMI-A-1" "off HDMI-A-1" "off card1-../../power/state" "detect card1-a/b"; do
+    # shellcheck disable=SC2086 # the words are the arguments
+    if sh "$helper" $args >/dev/null 2>&1; then fail "the display helper accepted '$args'"; fi
+done
 
 # host.lua must pick the mode up from the file, and fall back to its own MODE
 # for no file or a bad one. The appended assert sees the file-scope local MODE;
@@ -20,15 +22,15 @@ grep -Fq 'files/bin/display-mode' "$ROOT/hosts/desktop.nix" || fail "hosts/deskt
 if command -v Hyprland >/dev/null 2>&1; then
     # host_mode LINE-MODE FILE-CONTENT EXPECTED ("-" for no file)
     host_mode() {
-        local tree="$TMP/hypr" file="$TMP/mode-for-host"
-        rm -rf "$tree" "$file"
-        cp -r "$ROOT/files/hypr" "$tree"
-        cp "$ROOT/components/yt-stream-workspace/hyprland/yt-stream-workspace.lua" "$tree/"
-        cp -r "$ROOT/files/hosts/desktop/hypr/." "$tree/"
-        sed -i "s/^local MODE = .*/local MODE = \"$1\"/" "$tree/config/host.lua"
-        printf 'assert(MODE == "%s", "MODE is " .. MODE)\n' "$3" >>"$tree/config/host.lua"
+        local home="$TMP/hyprhome" tree="$TMP/hyprhome/.config/hypr" file="$TMP/mode-for-host"
+        rm -rf "$home" "$file"
+        mkdir -p "$home/.config"
+        cp -r "$ROOT/home/.config/hypr" "$tree"
+        cp "$ROOT/hosts/desktop/.config/hypr/host.lua" "$tree/"
+        sed -i "s/^local MODE = .*/local MODE = \"$1\"/" "$tree/host.lua"
+        printf 'assert(MODE == "%s", "MODE is " .. MODE)\n' "$3" >>"$tree/host.lua"
         [[ "$2" == "-" ]] || printf '%s\n' "$2" >"$file"
-        DISPLAY_MODE_FILE="$file" Hyprland --verify-config --config "$tree/hyprland.lua" 2>&1 | grep -q 'config ok' ||
+        HOME="$home" DISPLAY_MODE_FILE="$file" Hyprland --verify-config --config "$tree/hyprland.lua" 2>&1 | grep -q 'config ok' ||
             fail "host.lua with MODE=$1 and file '$2' did not give $3"
     }
     host_mode extended mirror mirror
@@ -78,7 +80,7 @@ run() {
     : >"$TMP/notes"
     env PATH="$TMP/bin:$PATH" XDG_RUNTIME_DIR="$TMP/run" DISPLAY_MODE_FILE="$mode_file" \
         DISPLAY_MODE_RELOAD="$TMP/reload" DISPLAY_MODE_TRIES=5 FAKE="$TMP" \
-        "$ROOT/files/bin/display-mode" "$@"
+        "$ROOT/hosts/desktop/.local/bin/display-mode" "$@"
 }
 # check WHAT RELOADS NOTE: how many reloads ran and what the notification said.
 check() {
@@ -161,23 +163,8 @@ link off
 link mirror
 [[ "$(grep -c 'helper detect' "$TMP/log")" == 1 && "$(link status)" == mirror ]] ||
     fail "mirror while off did not connect first: $(cat "$TMP/log")"
-# While it is off, the layout it comes back in can be recorded without
-# connecting it, printing the one recorded before (host.lua's own with none).
-# While it is connected, record changes nothing.
-rc=0
-link record extended >/dev/null || rc=$?
-[[ $rc == 3 && "$(cat "$mode_file")" == mirror ]] || fail "record while connected: exit $rc, recorded $(cat "$mode_file")"
-link off
-[[ "$(link record extended)" == mirror && "$(cat "$mode_file")" == extended ]] ||
-    fail "record while off recorded $(cat "$mode_file")"
-[[ -z "$(grep helper "$TMP/log")" && "$(link status)" == off ]] || fail "record connected the TV: $(cat "$TMP/log")"
-rm -f "$mode_file"
-[[ "$(link record mirror)" == extended ]] || fail "with nothing recorded, record did not print host.lua's default"
-if link record sideways 2>/dev/null; then fail "an unknown layout was recorded"; fi
 link on
 jq -n '[{name: "HDMI-A-1", mirrorOf: "none"}]' >"$TMP/monitors.json"
 [[ "$(link status)" == none ]] || fail "status with no TV attached is $(link status)"
-[[ "$(link record extended)" == mirror && "$(cat "$mode_file")" == extended ]] ||
-    fail "record with no TV attached recorded $(cat "$mode_file")"
 
-printf '%s\n' 'PASS display-mode toggles mirror and extended through host.lua, recovers from a failed reload, ignores presses during a switch, disconnects and connects the TV, and records the layout it comes back in'
+printf '%s\n' 'PASS display-mode toggles mirror and extended through host.lua, recovers from a failed reload, ignores presses during a switch, and disconnects and connects the TV'

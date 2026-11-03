@@ -1,0 +1,11 @@
+# A user directory set to $HOME is unused: xdg-user-dirs-update then stops
+# recreating Desktop, Music, Public and Templates at every login.
+XDG_DESKTOP_DIR="$HOME"
+XDG_DOCUMENTS_DIR="$HOME/Documents"
+XDG_DOWNLOAD_DIR="$HOME/Downloads"
+XDG_MUSIC_DIR="$HOME"
+XDG_PICTURES_DIR="$HOME/Pictures"
+XDG_PROJECTS_DIR="$HOME/Projects"
+XDG_PUBLICSHARE_DIR="$HOME"
+XDG_TEMPLATES_DIR="$HOME"
+XDG_VIDEOS_DIR="$HOME/Videos"

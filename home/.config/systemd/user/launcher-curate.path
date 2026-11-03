@@ -1,0 +1,11 @@
+[Unit]
+Description=Re-curate launcher entries when applications change
+
+[Path]
+PathChanged=/usr/share/applications
+PathChanged=/usr/local/share/applications
+PathChanged=%h/.local/share/applications
+PathChanged=%h/.config/launcher-curate
+
+[Install]
+WantedBy=default.target

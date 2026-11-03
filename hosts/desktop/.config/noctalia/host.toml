@@ -1,0 +1,25 @@
+# Desktop: Noctalia merges every *.toml here over config.toml. Two screens,
+# each bar with its own workspace buttons, and the TV's link (mirror,
+# extended or off; a click disconnects or connects it) before the clock.
+[bar.default]
+end = ["media", "network", "sep_1", "temp", "sep_2", "sysmon_2", "sep_3", "sysmon_3", "sep_4",
+       "volume", "sep_5", "tv", "sep_6", "clock", "tray", "notifications", "session", "spacer_2"]
+
+[bar.default.monitor.big]
+match = "HDMI-A-2"
+start = ["i3_workspaces_big", "spacer_1", "active_window"]
+
+[widget.i3_workspaces]
+monitor = "HDMI-A-1"
+
+[widget.i3_workspaces_big]
+type = "zaid/i3bar:workspaces"
+monitor = "HDMI-A-2"
+color = "#00000000"
+
+[widget.tv]
+type = "zaid/i3bar:screen"
+color = "#00000000"
+
+[widget.sep_6]
+type = "zaid/i3bar:separator"

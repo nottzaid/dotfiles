@@ -1,0 +1,16 @@
+# Earshot: the phone's microphone as a PipeWire mic (~/Projects/earshot).
+# earshotd hosts the ROC receiver and the phone's control channel for the
+# whole session; on a machine without the project checked out it stays off.
+[Unit]
+Description=Earshot phone microphone receiver
+Wants=pipewire.service pipewire-pulse.service
+After=pipewire.service pipewire-pulse.service
+ConditionPathExists=%h/Projects/earshot/pc/earshotd
+
+[Service]
+ExecStart=%h/Projects/earshot/pc/earshotd
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

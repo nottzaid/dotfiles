@@ -6,9 +6,8 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-scratch-world.XXXXXX")"
 trap 'rm -rf -- "$TMP"' EXIT
 STATE="$TMP/run/scratch-world"
 
-# A fake hyprctl serving canned state and recording dispatches and evals, and
-# a fake workspace-stream recording normal-world switches.
-mkdir -p "$TMP/bin" "$TMP/home/.local/bin" "$TMP/run"
+# A fake hyprctl serving canned state and recording dispatches and evals.
+mkdir -p "$TMP/bin" "$TMP/home" "$TMP/run"
 cat >"$TMP/bin/hyprctl" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
@@ -17,11 +16,7 @@ dispatch) printf '%s\n' "$2" >>"$FAKE/log" ;;
 eval) printf '%s\n' "$2" >>"$FAKE/evals" ;;
 esac
 EOF
-cat >"$TMP/home/.local/bin/workspace-stream" <<'EOF'
-#!/usr/bin/env bash
-printf 'workspace-stream %s\n' "$*" >>"$FAKE/log"
-EOF
-chmod +x "$TMP/bin/hyprctl" "$TMP/home/.local/bin/workspace-stream"
+chmod +x "$TMP/bin/hyprctl"
 
 fail() { printf 'FAIL %s\n' "$*" >&2; exit 1; }
 # state FOCUSED ACTIVE1 ACTIVE2 [HIDDEN_ON_2]: HDMI-A-1 has workspaces 1-5,
@@ -48,7 +43,7 @@ expect() {
     : >"$TMP/evals"
     # shellcheck disable=SC2086
     env PATH="$TMP/bin:$PATH" HOME="$TMP/home" XDG_RUNTIME_DIR="$TMP/run" XDG_STATE_HOME="$TMP/state" \
-        FAKE="$TMP" SCRATCH_WORLD_SLIDE_SECONDS=0 "$ROOT/files/bin/scratch-world" $1
+        FAKE="$TMP" SCRATCH_WORLD_SLIDE_SECONDS=0 "$ROOT/home/.local/bin/scratch-world" $1
     for _ in $(seq 50); do
         [[ -e "$STATE/vertical" ]] || break
         sleep 0.05
@@ -64,14 +59,14 @@ slide() { printf 'ScratchWorldSlide("%s")\nScratchWorldSlide()' "$1"; }
 # The normal world works as before, but steps over the hidden workspaces
 # (101-104 sit on HDMI-A-1 too).
 state HDMI-A-1 3 6
-expect "focus 7" "workspace-stream workspace 7"
-expect "focus m+1" "workspace-stream workspace 4"
-expect "focus m-1" "workspace-stream workspace 2"
-expect "focus emptym" "workspace-stream workspace emptym"
+expect "focus 7" "$(go 7)"
+expect "focus m+1" "$(go 4)"
+expect "focus m-1" "$(go 2)"
+expect "focus emptym" "$(go emptym)"
 expect "move 4 --silent" 'hl.dsp.window.move({ workspace = "4", follow = false })'
 expect "move m~2" 'hl.dsp.window.move({ workspace = "2" })'
 state HDMI-A-1 5 6
-expect "focus m+1" "workspace-stream workspace 1"
+expect "focus m+1" "$(go 1)"
 
 # Each screen enters its own world, sliding down: first at 1 of its own
 # block, then wherever it last was. The bar names its screen.
@@ -110,7 +105,7 @@ expect "move m~3" 'hl.dsp.window.move({ workspace = "103" })'
 expect "move 11" ""
 # Super+Shift+S sends a window home; Super+S leaves, sliding up, and remembers.
 expect "send" 'hl.dsp.window.move({ workspace = "3", follow = false })'
-expect "toggle" "workspace-stream workspace 3" "$(slide bottom)"
+expect "toggle" "$(go 3)" "$(slide bottom)"
 [[ "$(recalled last HDMI-A-1)" == 1 ]] || fail "leaving did not remember the workspace"
 # After replugging, the screen's hidden workspace is brought back to it.
 state HDMI-A-1 101 6 105
@@ -122,6 +117,6 @@ state HDMI-A-1 -1337 6
 echo 1 >"$STATE/last-HDMI-A-1"
 expect "toggle" "$(go 101)" "$(slide top)"
 state HDMI-A-1 101 6
-expect "toggle" "workspace-stream workspace name:gaming" "$(slide bottom)"
+expect "toggle" "$(go name:gaming)" "$(slide bottom)"
 
 printf '%s\n' 'PASS scratch-world keeps a hidden 1-10 per screen, slides vertically only in and out, and remembers where you were'
