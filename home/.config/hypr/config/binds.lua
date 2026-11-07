@@ -21,7 +21,6 @@ end
 hl.bind(mainMod .. " + Escape",      hl.dsp.exec_cmd("hyprctl kill"))
 hl.bind(mainMod .. " + Q",           hl.dsp.window.close())
 hl.bind(mainMod .. " + SHIFT + Space", hl.dsp.window.float({ action = "toggle" })) -- (repo) float toggle
-hl.bind(mainMod .. " + ALT + Space",   hl.dsp.window.float({ action = "toggle" }))   -- kept from default too
 hl.bind(mainMod .. " + F",             hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle" })) -- (repo) maximized, panels stay visible
 hl.bind(mainMod .. " + SHIFT + F",     hl.dsp.window.fullscreen())                   -- (repo) bar-covering fullscreen
 
@@ -33,7 +32,6 @@ hl.bind(mainMod .. " + J", hl.dsp.focus({ direction = "down" }))
 
 -- Window cycling (repo)
 hl.bind(mainMod .. " + Tab",         hl.dsp.window.cycle_next())
-hl.bind(mainMod .. " + SHIFT + Tab", hl.dsp.window.cycle_next({ next = false }))
 
 -- Move active window around workspaces & monitors
 -- Move: Vim-style HJKL (repo), replaces the default SHIFT+arrow-key binds
@@ -43,12 +41,6 @@ hl.bind(mainMod .. " + SHIFT + H", hl.dsp.window.move({ direction = "l" }))
 hl.bind(mainMod .. " + SHIFT + L", hl.dsp.window.move({ direction = "r" }))
 -- Monitor moves by number are superseded by the repo-style workspace loop
 -- below: mainMod + SHIFT + [0-9] moves the active window to workspace [1-10].
-hl.bind(mainMod .. " + CONTROL + SHIFT + Right",      hl.dsp.exec_cmd(worldCall .. "move m+1"))
-hl.bind(mainMod .. " + CONTROL + SHIFT + Left",       hl.dsp.exec_cmd(worldCall .. "move m-1"))
-for i = 1, NUM_WPM do
-    local key = i % 10
-    hl.bind(mainMod .. " + SHIFT + CONTROL + " .. digitCode(key), hl.dsp.exec_cmd(worldCall .. "move m~" .. i))
-end
 
 -- Move & Resize with mouse
 hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag())
@@ -68,11 +60,6 @@ end
 hl.bind(mainMod .. " + Minus", function() zoomfunction(-0.3) end, { repeating = true})
 hl.bind(mainMod .. " + Plus", function() zoomfunction(0.3) end, { repeating = true })
 
---# Zoom with keypad
-hl.bind(mainMod .. " + code:82", function() zoomfunction(-0.3) end, { repeating = true })
-hl.bind(mainMod .. " + code:86", function() zoomfunction(0.3) end, { repeating = true })
-
-
 ------------------
 ---- LAUNCHER ----
 ------------------
@@ -85,10 +72,8 @@ hl.bind(mainMod .. " + T",          hl.dsp.exec_cmd(launchPrefix .. EDITOR))
 hl.bind(mainMod .. " + C",          hl.dsp.exec_cmd(launchPrefix .. CALCULATOR))
 hl.bind("XF86Calculator",           hl.dsp.exec_cmd(launchPrefix .. CALCULATOR))
 hl.bind(mainMod .. " + W",          hl.dsp.exec_cmd(launchPrefix .. BROWSER))
-hl.bind("CONTROL + SHIFT + Escape", hl.dsp.exec_cmd(launchPrefix .. TERMINAL .. " -e btop"))
 hl.bind(mainMod .. " + Z",          hl.dsp.exec_cmd(noctCall .. "settings-toggle"))
 hl.bind(mainMod .. " + X",          hl.dsp.exec_cmd(noctCall .. "panel-toggle control-center"))
-hl.bind(mainMod .. " + Space",      hl.dsp.exec_cmd(noctCall .. "panel-toggle launcher"))
 hl.bind(mainMod .. " + period",     hl.dsp.exec_cmd(noctCall .. "panel-toggle launcher /emo"))
 hl.bind(mainMod .. " + ALT + C",    hl.dsp.exec_cmd(noctCall .. "panel-toggle session"))
 
@@ -115,6 +100,11 @@ hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd(noctCall .. "brightness-down"),
 -------------------
 ---- UTILITIES ----
 -------------------
+
+-- Dictation (Hex). Hyprland takes Hex's global shortcut but doesn't bind a key
+-- to it, so Hex's own Alt+Space setting never reaches the app. The suffix is
+-- the shortcut Hex registered; it changes when you record another key there.
+hl.bind("ALT + Space", hl.dsp.global("anomaly.hex:dictation-ALT-space"))
 
 -- Screen Capture
 hl.bind(mainMod .. " + P",     hl.dsp.exec_cmd("hyprpicker -a -n"))
@@ -148,17 +138,10 @@ for i = 1, 10 do
     hl.bind(mainMod .. " + SHIFT + " .. digitCode(key), hl.dsp.exec_cmd(worldCall .. "move " .. i .. " --silent"))
 end
 
--- Move to adjacent workspaces and next empty on a given monitor
-hl.bind(mainMod .. " + CONTROL + Right",       hl.dsp.exec_cmd(worldCall .. "focus m+1"))
-hl.bind(mainMod .. " + CONTROL + Left",        hl.dsp.exec_cmd(worldCall .. "focus m-1"))
-hl.bind(mainMod .. " + CONTROL + Down",        hl.dsp.exec_cmd(worldCall .. "focus emptym"))
-
 -- Scroll through existing workspaces & monitors
 -- (repo) Scroll through workspaces (mouse wheel down = next, up = previous).
 hl.bind(mainMod .. " + mouse_down", hl.dsp.exec_cmd(worldCall .. "focus m+1"))
 hl.bind(mainMod .. " + mouse_up",   hl.dsp.exec_cmd(worldCall .. "focus m-1"))
-hl.bind(mainMod .. " + CONTROL + mouse_up",   hl.dsp.exec_cmd(worldCall .. "focus m-1"))
-hl.bind(mainMod .. " + CONTROL + mouse_down", hl.dsp.exec_cmd(worldCall .. "focus m+1"))
 
 -- Scratchpad world: Super+S enters it at the last workspace used there, or
 -- leaves it; Super+Shift+S sends the window to the other world.
