@@ -1,26 +1,8 @@
-# Ghostty replaces Kitty + Herdr.
-#
-# Two halves: LOOKS (minimalist, tmux-style) and KEYS (Herdr's prefix keymap,
-# translated into Ghostty actions). Ghostty's own default bindings stay: where
-# Ghostty can do more than Herdr (direct split resizing, search, tab overview,
-# command palette, ...) nothing is curbed to match Herdr.
+# Ghostty replaces Kitty + Herdr: Herdr's prefix keymap, translated into
+# Ghostty actions. Looks are Ghostty's defaults. Ghostty's own default bindings
+# stay: where Ghostty can do more than Herdr (direct split resizing, search,
+# tab overview, command palette, ...) nothing is curbed to match Herdr.
 
-# ------------------------------------------------------------------ looks ----
-
-# Colors are Ghostty's defaults: no theme, no palette.
-
-# No titlebar; the tab bar sits at the bottom like tmux's status line, always
-# shown, flat, in the terminal's own colors (tabs.css trims it further).
-window-decoration = none
-window-theme = ghostty
-window-show-tab-bar = always
-gtk-tabs-location = bottom
-gtk-toolbar-style = flat
-gtk-wide-tabs = false
-gtk-custom-css = tabs.css
-
-window-padding-x = 25
-window-padding-y = 25
 confirm-close-surface = false
 
 # ------------------------------------------------------------------- keys ----
@@ -56,17 +38,6 @@ keybind = ctrl+b>shift+tab=goto_split:previous
 keybind = ctrl+b>z=toggle_split_zoom
 keybind = ctrl+b>x=close_surface
 keybind = ctrl+b>shift+p=prompt_surface_title
-
-# Herdr's next/previous agent (alt+j / alt+k, no prefix). Ghostty has no agent
-# panel, so these hop between the panes of the current tab.
-keybind = alt+j=goto_split:next
-keybind = alt+k=goto_split:previous
-
-# Workspaces: Ghostty has none; a window is the closest unit.
-keybind = ctrl+b>shift+n=new_window
-keybind = ctrl+b>shift+w=prompt_window_title
-keybind = ctrl+b>shift+d=close_window
-keybind = ctrl+b>w=goto_window:next
 
 # Navigation, help, config
 keybind = ctrl+b>g=toggle_tab_overview
@@ -113,6 +84,7 @@ keybind = copy/q=deactivate_key_table
 keybind = copy/escape=deactivate_key_table
 keybind = copy/catch_all=ignore
 
-# Not mapped, because Ghostty has nothing to bind them to: detach (prefix+q,
-# there is no server to detach from), swap panes (prefix+shift+h/j/k/l),
-# sidebar (prefix+b), notification target (prefix+o), worktrees.
+# Not mapped, because Ghostty has nothing to bind them to: workspaces
+# (prefix+w, shift+n/w/d), next/previous agent (alt+j/alt+k), detach (prefix+q),
+# swap panes (prefix+shift+h/j/k/l), sidebar (prefix+b), notification target
+# (prefix+o), worktrees.
