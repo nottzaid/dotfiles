@@ -1,0 +1,37 @@
+/* tmux-style status line: a thin, flat, square strip at the bottom. Colors
+   come from the terminal (window-theme = ghostty); only shape and size are
+   set here. The selectors are
+   libadwaita's own (AdwTabBar), which is why they are this specific. */
+
+tabbar tabbox {
+    padding: 0;
+    min-height: 22px;
+}
+
+tabbar tabbox > tabboxchild {
+    border-radius: 0;
+}
+
+tabbar tab {
+    min-height: 20px;
+    margin: 0;
+    padding: 0 8px;
+    border-radius: 0;
+    font-size: 0.9em;
+}
+
+/* The current "window": a flat tint, no outline. */
+tabbar tab:hover,
+tabbar tab:active,
+tabbar tab:selected {
+    box-shadow: none;
+}
+
+tabbar tab:selected {
+    font-weight: bold;
+}
+
+tabbar tab button.image-button {
+    min-width: 16px;
+    min-height: 16px;
+}

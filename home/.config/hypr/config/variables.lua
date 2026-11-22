@@ -1,6 +1,6 @@
 -- Hyprland default apps
 
-TERMINAL     = "kitty"
+TERMINAL     = "ghostty"
 BROWSER      = "firefox"
 EDITOR       = "gnome-text-editor --new-window"
 CALCULATOR   = "gnome-calculator"

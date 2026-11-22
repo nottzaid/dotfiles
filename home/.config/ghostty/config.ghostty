@@ -1,0 +1,118 @@
+# Ghostty replaces Kitty + Herdr.
+#
+# Two halves: LOOKS (minimalist, tmux-style) and KEYS (Herdr's prefix keymap,
+# translated into Ghostty actions). Ghostty's own default bindings stay: where
+# Ghostty can do more than Herdr (direct split resizing, search, tab overview,
+# command palette, ...) nothing is curbed to match Herdr.
+
+# ------------------------------------------------------------------ looks ----
+
+# Colors are Ghostty's defaults: no theme, no palette.
+
+# No titlebar; the tab bar sits at the bottom like tmux's status line, always
+# shown, flat, in the terminal's own colors (tabs.css trims it further).
+window-decoration = none
+window-theme = ghostty
+window-show-tab-bar = always
+gtk-tabs-location = bottom
+gtk-toolbar-style = flat
+gtk-wide-tabs = false
+gtk-custom-css = tabs.css
+
+window-padding-x = 25
+window-padding-y = 25
+confirm-close-surface = false
+
+# ------------------------------------------------------------------- keys ----
+# Prefix is ctrl+b, as in Herdr: `ctrl+b>c` is "press ctrl+b, then c".
+# Pressing the prefix twice sends a literal ctrl+b.
+keybind = ctrl+b>ctrl+b=text:\x02
+
+# Tabs
+keybind = ctrl+b>c=new_tab
+keybind = ctrl+b>n=next_tab
+keybind = ctrl+b>p=previous_tab
+keybind = ctrl+b>1=goto_tab:1
+keybind = ctrl+b>2=goto_tab:2
+keybind = ctrl+b>3=goto_tab:3
+keybind = ctrl+b>4=goto_tab:4
+keybind = ctrl+b>5=goto_tab:5
+keybind = ctrl+b>6=goto_tab:6
+keybind = ctrl+b>7=goto_tab:7
+keybind = ctrl+b>8=goto_tab:8
+keybind = ctrl+b>9=goto_tab:9
+keybind = ctrl+b>shift+t=prompt_tab_title
+keybind = ctrl+b>shift+x=close_tab:this
+
+# Panes (Ghostty calls them splits)
+keybind = ctrl+b>v=new_split:right
+keybind = ctrl+b>minus=new_split:down
+keybind = ctrl+b>h=goto_split:left
+keybind = ctrl+b>j=goto_split:down
+keybind = ctrl+b>k=goto_split:up
+keybind = ctrl+b>l=goto_split:right
+keybind = ctrl+b>tab=goto_split:next
+keybind = ctrl+b>shift+tab=goto_split:previous
+keybind = ctrl+b>z=toggle_split_zoom
+keybind = ctrl+b>x=close_surface
+keybind = ctrl+b>shift+p=prompt_surface_title
+
+# Herdr's next/previous agent (alt+j / alt+k, no prefix). Ghostty has no agent
+# panel, so these hop between the panes of the current tab.
+keybind = alt+j=goto_split:next
+keybind = alt+k=goto_split:previous
+
+# Workspaces: Ghostty has none; a window is the closest unit.
+keybind = ctrl+b>shift+n=new_window
+keybind = ctrl+b>shift+w=prompt_window_title
+keybind = ctrl+b>shift+d=close_window
+keybind = ctrl+b>w=goto_window:next
+
+# Navigation, help, config
+keybind = ctrl+b>g=toggle_tab_overview
+keybind = ctrl+b>shift+slash=toggle_command_palette
+keybind = ctrl+b>s=open_config
+keybind = ctrl+b>shift+r=reload_config
+keybind = ctrl+b>e=write_scrollback_file:open,plain
+
+# Resize mode: h/j/k/l or arrows, esc/enter/q to leave.
+keybind = ctrl+b>r=activate_key_table:resize
+keybind = resize/h=resize_split:left,10
+keybind = resize/j=resize_split:down,10
+keybind = resize/k=resize_split:up,10
+keybind = resize/l=resize_split:right,10
+keybind = resize/arrow_left=resize_split:left,10
+keybind = resize/arrow_down=resize_split:down,10
+keybind = resize/arrow_up=resize_split:up,10
+keybind = resize/arrow_right=resize_split:right,10
+keybind = resize/escape=deactivate_key_table
+keybind = resize/enter=deactivate_key_table
+keybind = resize/q=deactivate_key_table
+keybind = resize/catch_all=ignore
+
+# Copy mode: Ghostty has no cursor-driven copy mode, so this covers what it
+# can: scroll, search, and copy the current (mouse) selection. q/esc to leave.
+keybind = ctrl+b>[=activate_key_table:copy
+keybind = copy/j=scroll_page_lines:1
+keybind = copy/k=scroll_page_lines:-1
+keybind = copy/arrow_down=scroll_page_lines:1
+keybind = copy/arrow_up=scroll_page_lines:-1
+keybind = copy/ctrl+d=scroll_page_fractional:0.5
+keybind = copy/ctrl+u=scroll_page_fractional:-0.5
+keybind = copy/ctrl+f=scroll_page_down
+keybind = copy/page_down=scroll_page_down
+keybind = copy/page_up=scroll_page_up
+keybind = copy/slash=start_search
+keybind = copy/n=navigate_search:next
+keybind = copy/shift+n=navigate_search:previous
+keybind = copy/y=copy_to_clipboard:mixed
+keybind = chain=deactivate_key_table
+keybind = copy/enter=copy_to_clipboard:mixed
+keybind = chain=deactivate_key_table
+keybind = copy/q=deactivate_key_table
+keybind = copy/escape=deactivate_key_table
+keybind = copy/catch_all=ignore
+
+# Not mapped, because Ghostty has nothing to bind them to: detach (prefix+q,
+# there is no server to detach from), swap panes (prefix+shift+h/j/k/l),
+# sidebar (prefix+b), notification target (prefix+o), worktrees.
