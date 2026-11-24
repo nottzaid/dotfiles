@@ -3,7 +3,7 @@ Version=1.0
 Type=Application
 Name=Kitty (plain)
 GenericName=Terminal emulator
-Comment=Kitty with your login shell only, without Herdr
+Comment=Kitty with your login shell only, without zmx
 TryExec=kitty
 Exec=kitty --override shell=.
 Icon=kitty

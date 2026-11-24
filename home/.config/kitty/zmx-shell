@@ -1,0 +1,31 @@
+#!/bin/sh
+# Wrapper shell for Kitty panes: attaches each pane to a persistent zmx session
+# and records the pane->session mapping so zmx_watcher.py can reap explicit
+# Ctrl+b>x closes while keeping sessions alive on window close / detach.
+
+# If an inherited session SHELL no longer exists (e.g. after switching login
+# shell before re-login), resolve the user's current login shell from passwd.
+if [ -z "${SHELL:-}" ] || [ ! -x "${SHELL}" ]; then
+    login_shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"
+    if [ -n "$login_shell" ] && [ -x "$login_shell" ]; then
+        export SHELL="$login_shell"
+    else
+        export SHELL="/usr/bin/zsh"
+    fi
+fi
+
+if [ -n "${KITTY_ZMX_SESSION:-}" ]; then
+    session="$KITTY_ZMX_SESSION"
+    unset KITTY_ZMX_SESSION
+else
+    session="k-$(date +%s)-$$"
+fi
+
+if [ -n "${KITTY_WINDOW_ID:-}" ] && [ -x /usr/bin/zmx ]; then
+    map_dir="${XDG_RUNTIME_DIR:-/tmp}/kitty-zmx-${PPID}"
+    mkdir -p "$map_dir"
+    printf '%s\n' "$session" > "${map_dir}/${KITTY_WINDOW_ID}"
+    exec /usr/bin/zmx attach "$session"
+fi
+
+exec "${SHELL:-/usr/bin/zsh}" -l

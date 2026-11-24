@@ -1,0 +1,17 @@
+#!/bin/sh
+# Launch Kitty restoring the autosaved multi-split layout + zmx sessions when
+# no primary kitty-zmx instance is currently open; otherwise open a fresh window.
+set -eu
+
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+LOCK_FILE="${RUNTIME_DIR}/kitty-zmx.lock"
+SESSION_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/kitty/sessions/autosave.kitty-session"
+
+if [ "$#" -eq 0 ] && flock -n "$LOCK_FILE" true 2>/dev/null; then
+    export KITTY_ZMX_PRIMARY=1
+    if [ -s "$SESSION_FILE" ]; then
+        exec /usr/bin/kitty --session "$SESSION_FILE"
+    fi
+fi
+
+exec /usr/bin/kitty "$@"

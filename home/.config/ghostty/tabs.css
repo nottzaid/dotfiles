@@ -1,0 +1,25 @@
+/* Text-only tab strip: no pills, no shadow, no buttons. Active tab is
+   bright, the rest recede. Background is the terminal's own. */
+tabbar,
+tabbar .box,
+tabbar tabbox {
+  background: transparent;
+  box-shadow: none;
+  border: none;
+}
+
+tabbar tab {
+  min-height: 22px;
+  margin: 0;
+  padding: 0 6px;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  font-size: 0.9em;
+  opacity: 0.4;
+}
+
+tabbar tab:hover { opacity: 0.7; }
+tabbar tab:selected { opacity: 1; background: none; }
+
+tabbar tab button { opacity: 0; }

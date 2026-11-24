@@ -1,16 +1,46 @@
-# Ghostty replaces Kitty + Herdr: Herdr's prefix keymap, translated into
-# Ghostty actions. Looks are Ghostty's defaults. Ghostty's own default bindings
-# stay: where Ghostty can do more than Herdr (direct split resizing, search,
-# tab overview, command palette, ...) nothing is curbed to match Herdr.
+# Ghostty native configuration with a Ctrl+b prefix workflow:
+# - Keeps your familiar Ctrl+b muscle memory and all Ghostty 1.4.0 powers.
+# - Ctrl+b>Esc cancels the prefix cleanly; Ctrl+b>Ctrl+b sends literal Ctrl+b.
+# - Sticky Key Tables for Resize (Ctrl+b>r) and Scroll/Search/Copy (Ctrl+b>[).
+# - Ghostty's own defaults stay intact (Alt+1..9, Ctrl+Tab, Ctrl+Shift+F/P/C/V/Up/Down).
 
 confirm-close-surface = false
 
-# ------------------------------------------------------------------- keys ----
-# Prefix is ctrl+b, as in Herdr: `ctrl+b>c` is "press ctrl+b, then c".
-# Pressing the prefix twice sends a literal ctrl+b.
-keybind = ctrl+b>ctrl+b=text:\x02
+# Multiplexer-grade ergonomics
+split-preserve-zoom = navigation
+notify-on-command-finish = unfocused
+notify-on-command-finish-action = bell,notify
+notify-on-command-finish-after = 5s
+shell-integration-features = cursor,no-sudo,title,ssh-env,ssh-terminfo,path
 
-# Tabs
+# Tabs: one slim text-only strip (see tabs.css), no titlebar.
+gtk-titlebar = false
+gtk-wide-tabs = false
+gtk-toolbar-style = flat
+gtk-custom-css = tabs.css
+
+# ----------------------------------------------------------------- Prefix ----
+# Prefix is ctrl+b: press ctrl+b, release, then press the action key.
+keybind = ctrl+b>ctrl+b=text:\x02
+keybind = ctrl+b>escape=end_key_sequence
+
+# ------------------------------------------------------------------ Splits ----
+keybind = ctrl+b>h=goto_split:left
+keybind = ctrl+b>j=goto_split:down
+keybind = ctrl+b>k=goto_split:up
+keybind = ctrl+b>l=goto_split:right
+keybind = ctrl+b>tab=goto_split:next
+keybind = ctrl+b>shift+tab=goto_split:previous
+
+keybind = ctrl+b>v=new_split:right
+keybind = ctrl+b>minus=new_split:down
+keybind = ctrl+b>a=new_split:auto
+keybind = ctrl+b>z=toggle_split_zoom
+keybind = ctrl+b>equal=equalize_splits
+keybind = ctrl+b>x=close_surface
+keybind = ctrl+b>shift+p=prompt_surface_title
+
+# -------------------------------------------------------------------- Tabs ----
 keybind = ctrl+b>c=new_tab
 keybind = ctrl+b>n=next_tab
 keybind = ctrl+b>p=previous_tab
@@ -23,47 +53,52 @@ keybind = ctrl+b>6=goto_tab:6
 keybind = ctrl+b>7=goto_tab:7
 keybind = ctrl+b>8=goto_tab:8
 keybind = ctrl+b>9=goto_tab:9
+keybind = ctrl+b>comma=move_tab:-1
+keybind = ctrl+b>period=move_tab:1
 keybind = ctrl+b>shift+t=prompt_tab_title
 keybind = ctrl+b>shift+x=close_tab:this
-
-# Panes (Ghostty calls them splits)
-keybind = ctrl+b>v=new_split:right
-keybind = ctrl+b>minus=new_split:down
-keybind = ctrl+b>h=goto_split:left
-keybind = ctrl+b>j=goto_split:down
-keybind = ctrl+b>k=goto_split:up
-keybind = ctrl+b>l=goto_split:right
-keybind = ctrl+b>tab=goto_split:next
-keybind = ctrl+b>shift+tab=goto_split:previous
-keybind = ctrl+b>z=toggle_split_zoom
-keybind = ctrl+b>x=close_surface
-keybind = ctrl+b>shift+p=prompt_surface_title
-
-# Navigation, help, config
+keybind = ctrl+b>shift+o=close_tab:other
+keybind = ctrl+b>shift+w=move_tab_to_new_window
 keybind = ctrl+b>g=toggle_tab_overview
-keybind = ctrl+b>shift+slash=toggle_command_palette
-keybind = ctrl+b>s=open_config
-keybind = ctrl+b>shift+r=reload_config
-keybind = ctrl+b>e=write_scrollback_file:open,plain
 
-# Resize mode: h/j/k/l or arrows, esc/enter/q to leave.
+# ------------------------------------------------------- Ghostty Power Tools --
+keybind = ctrl+b>shift+l=toggle_readonly
+keybind = ctrl+b>m=toggle_mouse_reporting
+keybind = ctrl+b>u=copy_url_to_clipboard
+keybind = ctrl+b>e=write_scrollback_file:open,plain
+keybind = ctrl+b>shift+v=write_selection_file:open,plain
+keybind = ctrl+b>slash=start_search
+keybind = ctrl+b>shift+slash=toggle_command_palette
+keybind = ctrl+b>s=open_config:new_window
+keybind = ctrl+b>shift+r=reload_config
+keybind = ctrl+b>i=inspector:toggle
+keybind = ctrl+b>ctrl+r=reset
+
+# ------------------------------------------------------------ Sticky Modes ----
+# Resize mode: h/j/k/l (or arrows) for fine 10px, Shift+HJKL for coarse 40px, = to equalize
 keybind = ctrl+b>r=activate_key_table:resize
+keybind = resize/
 keybind = resize/h=resize_split:left,10
 keybind = resize/j=resize_split:down,10
 keybind = resize/k=resize_split:up,10
 keybind = resize/l=resize_split:right,10
+keybind = resize/shift+h=resize_split:left,40
+keybind = resize/shift+j=resize_split:down,40
+keybind = resize/shift+k=resize_split:up,40
+keybind = resize/shift+l=resize_split:right,40
 keybind = resize/arrow_left=resize_split:left,10
 keybind = resize/arrow_down=resize_split:down,10
 keybind = resize/arrow_up=resize_split:up,10
 keybind = resize/arrow_right=resize_split:right,10
+keybind = resize/equal=equalize_splits
 keybind = resize/escape=deactivate_key_table
 keybind = resize/enter=deactivate_key_table
 keybind = resize/q=deactivate_key_table
 keybind = resize/catch_all=ignore
 
-# Copy mode: Ghostty has no cursor-driven copy mode, so this covers what it
-# can: scroll, search, and copy the current (mouse) selection. q/esc to leave.
+# Scroll / Search / Copy mode: Vim scroll + prompt jumps + search + $EDITOR scrollback
 keybind = ctrl+b>[=activate_key_table:copy
+keybind = copy/
 keybind = copy/j=scroll_page_lines:1
 keybind = copy/k=scroll_page_lines:-1
 keybind = copy/arrow_down=scroll_page_lines:1
@@ -71,20 +106,28 @@ keybind = copy/arrow_up=scroll_page_lines:-1
 keybind = copy/ctrl+d=scroll_page_fractional:0.5
 keybind = copy/ctrl+u=scroll_page_fractional:-0.5
 keybind = copy/ctrl+f=scroll_page_down
+keybind = copy/ctrl+b=scroll_page_up
 keybind = copy/page_down=scroll_page_down
 keybind = copy/page_up=scroll_page_up
+keybind = copy/g=scroll_to_top
+keybind = copy/shift+g=scroll_to_bottom
+keybind = copy/[=jump_to_prompt:-1
+keybind = copy/]=jump_to_prompt:1
 keybind = copy/slash=start_search
+keybind = copy/s=search_selection
 keybind = copy/n=navigate_search:next
 keybind = copy/shift+n=navigate_search:previous
+keybind = copy/e=write_scrollback_file:open,plain
+keybind = chain=deactivate_key_table
 keybind = copy/y=copy_to_clipboard:mixed
 keybind = chain=deactivate_key_table
 keybind = copy/enter=copy_to_clipboard:mixed
 keybind = chain=deactivate_key_table
-keybind = copy/q=deactivate_key_table
-keybind = copy/escape=deactivate_key_table
+keybind = copy/q=end_search
+keybind = chain=deactivate_key_table
+keybind = copy/escape=end_search
+keybind = chain=deactivate_key_table
 keybind = copy/catch_all=ignore
 
-# Not mapped, because Ghostty has nothing to bind them to: workspaces
-# (prefix+w, shift+n/w/d), next/previous agent (alt+j/alt+k), detach (prefix+q),
-# swap panes (prefix+shift+h/j/k/l), sidebar (prefix+b), notification target
-# (prefix+o), worktrees.
+# -------------------------------------------------------- Command Palette ----
+command-palette-entry = title:"New Split: Auto",description:"Split along whichever axis currently has more room.",action:new_split:auto

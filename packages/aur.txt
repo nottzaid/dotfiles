@@ -1,2 +1,1 @@
 # AUR packages (built with an AUR helper, then owned by pacman).
-herdr-bin

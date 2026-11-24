@@ -1,0 +1,16 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=kitty
+GenericName=Terminal emulator
+Comment=Kitty with zmx session and multi-split layout persistence
+TryExec=kitty
+StartupNotify=true
+Exec=/home/zaid/.local/bin/kitty-zmx
+Icon=kitty
+Categories=System;TerminalEmulator;
+X-TerminalArgExec=--
+X-TerminalArgTitle=--title
+X-TerminalArgAppId=--class
+X-TerminalArgDir=--working-directory
+X-TerminalArgHold=--hold
