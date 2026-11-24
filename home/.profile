@@ -1,7 +1,5 @@
 # The login environment, for every shell and the graphical session (uwsm
-# reads it). Only `export NAME="value"` lines: fish sources this file too
-# (~/.config/fish/config.fish), and quoted "$PATH" joins with colons there
-# as in sh. Shells that already have it (DOTFILES_PROFILE) skip it.
+# reads it). Shells that already have it (DOTFILES_PROFILE) skip it.
 export DOTFILES_PROFILE=1
 export BROWSER="firefox"
 

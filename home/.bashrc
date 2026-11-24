@@ -1,4 +1,4 @@
-# Interactive Bash (fish is the login shell; Bash serves scripts and tools).
+# Interactive Bash (zsh is the login shell; Bash serves scripts and tools).
 [[ $- == *i* ]] || return
 [[ -n ${DOTFILES_PROFILE-} ]] || . ~/.profile
 
@@ -13,3 +13,7 @@ mkdir -p ~/.local/state/bash
 shopt -s histappend extglob globstar checkjobs
 
 [[ -v BASH_COMPLETION_VERSINFO ]] || . /usr/share/bash-completion/bash_completion
+
+
+# Added by Antigravity CLI installer
+export PATH="/home/zaid/.local/bin:$PATH"
